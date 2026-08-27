@@ -37,7 +37,8 @@ jobs:
       - name: Checkout x-tunnel core
         uses: actions/checkout@v6
         with:
-          repository: 6Kmfi6HP/x-tunnel
+          repository: callacat/x-tunnel
+          ref: main
           path: external/x-tunnel
 
       - name: Validate tag
