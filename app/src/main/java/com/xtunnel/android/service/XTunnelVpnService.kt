@@ -21,6 +21,10 @@ class XTunnelVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // 点 6 修复：真正停止 sidecar 进程后再停服务。此前只 stopSelf()，
+                // 未杀 sidecar 子进程（进程残留、日志无 graceful shutdown 记录）。
+                // RuntimeManager.stop 内部会 kill 子进程 + 复位状态。
+                XTunnelRuntimeManager.get(this).stop()
                 stopSelf()
                 return START_NOT_STICKY
             }

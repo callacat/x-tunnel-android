@@ -8,6 +8,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -109,6 +110,12 @@ private fun XTunnelApp() {
 @Composable
 private fun RootNav(onThemeChange: (ThemeMode) -> Unit) {
     var screen by remember { mutableStateOf(Screen.Dashboard) }
+
+    // 点 8：拦截 Android 手势/系统返回——非首页时返回首页，而非退出 App。
+    BackHandler(enabled = screen != Screen.Dashboard) {
+        screen = Screen.Dashboard
+    }
+
     when (screen) {
         Screen.Dashboard -> DashboardScreen(
             onOpenProfiles = { screen = Screen.Profiles },

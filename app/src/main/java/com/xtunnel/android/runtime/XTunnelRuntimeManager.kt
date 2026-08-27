@@ -102,6 +102,15 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         tokenFile.delete()
         configFile.writeText(profile.toConfigJson().toString(2))
 
+        // 点 1（日志增强）：启动前记录关键连接参数，用于定位「仅 IPv4 仍无法连接」断点。
+        // 只记非敏感字段（IP 栈/优选 IP/ECH 域名），token 绝不落日志（avoid 明文泄漏）。
+        LogStore.append(
+            LogStore.Level.Info,
+            "启动参数：server=${profile.serverUrl} ipStack=${profile.ipStrategy.ifBlank { "默认" }}" +
+                " dialIPs=${profile.dialIPs.ifBlank { "无" }} ech=${profile.ech.ifBlank { "无" }}" +
+                " dns=${profile.dns.ifBlank { "默认" }} fallback=${profile.fallback} insecure=${profile.insecure}",
+        )
+
         val command = listOf(
             executable.absolutePath,
             "-config",
