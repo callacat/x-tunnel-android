@@ -316,6 +316,43 @@ private fun ProfileCard(
                     onCheckedChange = { onProfileChange(profile.copy(fallback = it)) },
                 )
             }
+            Text(
+                text = "Anti-interference (advanced)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = profile.ech,
+                onValueChange = { onProfileChange(profile.copy(ech = it.trim())) },
+                label = { Text("ECH domain") },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = profile.dialIPs,
+                onValueChange = { onProfileChange(profile.copy(dialIPs = it.trim())) },
+                label = { Text("CF preferred IPs / hosts (-ip)") },
+                placeholder = { Text("e.g. 1.2.3.4 or cf.example.com, comma separated") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = profile.ipStrategy,
+                onValueChange = { onProfileChange(profile.copy(ipStrategy = it.trim())) },
+                label = { Text("IP stack (-ips)") },
+                placeholder = { Text("4 / 6 / 4,6 / 6,4") },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = profile.dnsCacheTtl,
+                onValueChange = { onProfileChange(profile.copy(dnsCacheTtl = it.trim())) },
+                label = { Text("DNS cache TTL") },
+                placeholder = { Text("5m / 30s / 0 (disable)") },
+                singleLine = true,
+            )
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onSave,

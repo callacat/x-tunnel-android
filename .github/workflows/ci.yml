@@ -27,7 +27,8 @@ jobs:
       - name: Checkout x-tunnel core
         uses: actions/checkout@v6
         with:
-          repository: 6Kmfi6HP/x-tunnel
+          # 自研 fork：main 已合入 feat/dns-cache 三 commit，作为 Android sidecar 构建基线
+          repository: callacat/x-tunnel
           path: external/x-tunnel
 
       - name: Setup Java
@@ -55,7 +56,10 @@ jobs:
         run: bash ./scripts/build-hev-android.sh
 
       - name: Build x-tunnel arm64 sidecar
-        run: bash ./scripts/build-core-android.sh
+        run: |
+          XTUNNEL_CORE_VERSION="${XTUNNEL_CORE_VERSION:-android-dev}" \
+          XTUNNEL_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          bash ./scripts/build-core-android.sh
 
       - name: Build and lint APKs
         run: ./gradlew --no-daemon assembleDebug lintDebug assembleRelease bundleRelease

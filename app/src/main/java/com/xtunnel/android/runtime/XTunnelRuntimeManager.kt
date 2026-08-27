@@ -258,6 +258,10 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             .put("connections", connections)
             .put("insecure", insecure)
             .put("fallback", fallback)
+            // 抗干扰参数：仅显式配置时写入，避免空串覆盖 sidecar 默认语义
+            .apply { if (dialIPs.isNotBlank()) put("ip", dialIPs) }
+            .apply { if (ipStrategy.isNotBlank()) put("ips", ipStrategy) }
+            .apply { if (dnsCacheTtl.isNotBlank()) put("dns_cache_ttl", dnsCacheTtl) }
             .put("dial_timeout", "5s")
             .put("ws_handshake_timeout", "5s")
             .put("reconnect_delay", "1s")
