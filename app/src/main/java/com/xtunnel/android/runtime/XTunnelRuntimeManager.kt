@@ -34,7 +34,7 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         if (process?.isRunning() == true) {
             RuntimeStateStore.update(
                 RuntimeStateStore.snapshot().copy(
-                    detail = "Already running",
+                    detail = "已在运行",
                     updatedAtMillis = System.currentTimeMillis(),
                 ),
             )
@@ -45,19 +45,21 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             RuntimeSnapshot(
                 state = RuntimeState.Starting,
                 profileName = profile.name,
-                detail = "Starting x-tunnel sidecar",
+                detail = "正在启动 x-tunnel sidecar",
             ),
         )
+        LogStore.append(LogStore.Level.Info, "启动隧道：${profile.name}")
 
         executor.execute {
             runCatching {
                 startBlocking(profile, vpnService)
             }.onFailure { error ->
+                LogStore.append(LogStore.Level.Error, "启动失败: ${error.message ?: error.javaClass.simpleName}")
                 RuntimeStateStore.update(
                     RuntimeSnapshot(
                         state = RuntimeState.Failed,
                         profileName = profile.name,
-                        detail = error.message ?: error.javaClass.simpleName,
+                        detail = "启动失败：${error.message ?: error.javaClass.simpleName}",
                     ),
                 )
                 stopBlocking()
@@ -67,16 +69,24 @@ class XTunnelRuntimeManager private constructor(context: Context) {
 
     @Synchronized
     fun stop() {
+        // 点 6：stop 用独立线程立即执行，避免与 start 排队同一单线程 executor 被启动流程阻塞，
+        // 导致「关闭按钮失效」。
         RuntimeStateStore.update(
             RuntimeStateStore.snapshot().copy(
                 state = RuntimeState.Stopping,
-                detail = "Stopping x-tunnel sidecar",
+                detail = "正在停止 x-tunnel sidecar",
                 updatedAtMillis = System.currentTimeMillis(),
             ),
         )
-        executor.execute {
-            stopBlocking()
-            RuntimeStateStore.update(RuntimeSnapshot())
+        LogStore.append(LogStore.Level.Info, "用户请求停止隧道")
+        Thread {
+            runCatching { stopBlocking() }
+            LogStore.append(LogStore.Level.Info, "隧道已停止，状态已复位")
+            RuntimeStateStore.update(RuntimeSnapshot(detail = "已停止"))
+        }.apply {
+            name = "x-tunnel-stop"
+            isDaemon = true
+            start()
         }
     }
 
@@ -117,24 +127,25 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         token = bearer
         checkHealth(ready.controlUrl)
         val dataPathResult = if (vpnService != null) {
-            VpnDataPathController(vpnService).also { dataPathController = it }.start(profile)
-        } else {
-            VpnDataPathController.VpnDataPathResult(
-                state = VpnDataPathState.NotStarted,
-                detail = "VPN service was not provided",
-            )
-        }
+                VpnDataPathController(vpnService).also { dataPathController = it }.start(profile)
+            } else {
+                VpnDataPathController.VpnDataPathResult(
+                    state = VpnDataPathState.NotStarted,
+                    detail = "未提供 VPN 服务",
+                )
+            }
         RuntimeStateStore.update(
             RuntimeSnapshot(
                 state = RuntimeState.Ready,
                 profileName = profile.name,
-                detail = "x-tunnel sidecar ready",
+                detail = "x-tunnel sidecar 已就绪",
                 controlUrl = ready.controlUrl,
                 pid = ready.pid,
                 dataPathState = dataPathResult.state,
                 dataPathDetail = dataPathResult.detail,
             ),
         )
+        LogStore.append(LogStore.Level.Info, "隧道就绪 pid=${ready.pid} 数据面=${dataPathResult.state.name}")
     }
 
     private fun stopBlocking() {
@@ -216,10 +227,13 @@ class XTunnelRuntimeManager private constructor(context: Context) {
     }
 
     private fun consumeOutput(started: Process) {
+        LogStore.redirectTo(appContext)
         Thread {
             runCatching {
                 started.inputStream.bufferedReader().useLines { lines ->
-                    lines.take(MAX_LOG_LINES).forEach { line ->
+                    lines.forEach { line ->
+                        // 点 5：sidecar 输出进入日志页；最近一条同时反映到状态卡详情。
+                        LogStore.append(LogStore.Level.Info, line)
                         RuntimeStateStore.update(
                             RuntimeStateStore.snapshot().copy(
                                 detail = line.take(MAX_DETAIL_CHARS),
@@ -230,9 +244,11 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                 }
             }.onFailure { error ->
                 if (error !is IOException) {
+                    val msg = "日志读取失败: ${error.message ?: error.javaClass.simpleName}"
+                    LogStore.append(LogStore.Level.Error, msg)
                     RuntimeStateStore.update(
                         RuntimeStateStore.snapshot().copy(
-                            detail = "x-tunnel output reader failed: ${error.message ?: error.javaClass.simpleName}",
+                            detail = msg,
                             updatedAtMillis = System.currentTimeMillis(),
                         ),
                     )
@@ -250,10 +266,11 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             .put("listen", socksListen)
             .put("forward", serverUrl)
             .put("token", this.token)
-            .put("metrics", metricsListen)
+            .apply { if (metricsListen.isNotBlank()) put("metrics", metricsListen) }
             .put("cidr", cidr)
-            .put("dns", dns)
-            .put("ech", ech)
+            // dns/ech 空则不写，避免覆盖 sidecar 默认语义（点 7：不内置域名）
+            .apply { if (dns.isNotBlank()) put("dns", dns) }
+            .apply { if (ech.isNotBlank()) put("ech", ech) }
             .put("block", blockPorts)
             .put("connections", connections)
             .put("insecure", insecure)

@@ -17,7 +17,7 @@ class VpnDataPathController(private val service: VpnService) {
         if (!tun2socks.isFile) {
             return VpnDataPathResult(
                 state = VpnDataPathState.MissingTun2Socks,
-                detail = "Missing tun2socks native runtime: $TUN2SOCKS_EXECUTABLE",
+                detail = "缺少 tun2socks 原生运行库: $TUN2SOCKS_EXECUTABLE",
             )
         }
 
@@ -31,7 +31,7 @@ class VpnDataPathController(private val service: VpnService) {
             }
             VpnDataPathResult(
                 state = VpnDataPathState.Running,
-                detail = "TUN established; tun2socks is forwarding to ${profile.socksListen}",
+                detail = "TUN 已建立；tun2socks 正在转发到 ${profile.socksListen}",
             )
         }.getOrElse { error ->
             close()
@@ -63,7 +63,7 @@ class VpnDataPathController(private val service: VpnService) {
             // The current package should exist; keep setup resilient for unusual test contexts.
         }
 
-        return builder.establish() ?: error("Android rejected VpnService.Builder.establish()")
+        return builder.establish() ?: error("Android 拒绝了 VpnService.Builder.establish()")
     }
 
     private fun writeTun2SocksConfig(profile: XTunnelProfile): File {
@@ -116,9 +116,9 @@ private fun XTunnelProfile.socksEndpoint(): SocksEndpoint {
     val hostPort = authority.substringBefore('/')
     val host = hostPort.substringBeforeLast(':')
     val port = hostPort.substringAfterLast(':').toIntOrNull()
-        ?: error("Invalid SOCKS5 listen port: $socksListen")
+        ?: error("无效的 SOCKS5 监听端口: $socksListen")
     val trimmedHost = host.trim('[', ']')
-    require(trimmedHost.isNotBlank()) { "Invalid SOCKS5 listen host: $socksListen" }
+    require(trimmedHost.isNotBlank()) { "无效的 SOCKS5 监听主机: $socksListen" }
     val connectHost = when (trimmedHost) {
         "0.0.0.0", "::" -> "127.0.0.1"
         else -> trimmedHost

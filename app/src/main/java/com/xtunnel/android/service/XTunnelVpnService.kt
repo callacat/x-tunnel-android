@@ -123,7 +123,7 @@ class XTunnelVpnService : VpnService() {
         private const val EXTRA_IP_STRATEGY = "ip_strategy"
         private const val EXTRA_DNS_CACHE_TTL = "dns_cache_ttl"
 
-        fun start(context: Context, profile: XTunnelProfile = DefaultProfile.production) {
+        fun start(context: Context, profile: XTunnelProfile) {
             val intent = Intent(context, XTunnelVpnService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_PROFILE_NAME, profile.name)
@@ -153,23 +153,24 @@ class XTunnelVpnService : VpnService() {
         }
 
         private fun Intent?.profileOrDefault(): XTunnelProfile {
-            if (this == null) return DefaultProfile.production
+            val fallback = DefaultProfile.blank
+            if (this == null) return fallback
             return XTunnelProfile(
-                name = getStringExtra(EXTRA_PROFILE_NAME) ?: DefaultProfile.production.name,
-                serverUrl = getStringExtra(EXTRA_SERVER_URL) ?: DefaultProfile.production.serverUrl,
-                token = getStringExtra(EXTRA_TOKEN) ?: DefaultProfile.production.token,
-                socksListen = getStringExtra(EXTRA_SOCKS_LISTEN) ?: DefaultProfile.production.socksListen,
-                metricsListen = getStringExtra(EXTRA_METRICS_LISTEN) ?: DefaultProfile.production.metricsListen,
-                cidr = getStringExtra(EXTRA_CIDR) ?: DefaultProfile.production.cidr,
-                dns = getStringExtra(EXTRA_DNS) ?: DefaultProfile.production.dns,
-                ech = getStringExtra(EXTRA_ECH) ?: DefaultProfile.production.ech,
-                blockPorts = getStringExtra(EXTRA_BLOCK_PORTS) ?: DefaultProfile.production.blockPorts,
-                connections = getIntExtra(EXTRA_CONNECTIONS, DefaultProfile.production.connections),
-                insecure = getBooleanExtra(EXTRA_INSECURE, DefaultProfile.production.insecure),
-                fallback = getBooleanExtra(EXTRA_FALLBACK, DefaultProfile.production.fallback),
-                dialIPs = getStringExtra(EXTRA_DIAL_IPS) ?: DefaultProfile.production.dialIPs,
-                ipStrategy = getStringExtra(EXTRA_IP_STRATEGY) ?: DefaultProfile.production.ipStrategy,
-                dnsCacheTtl = getStringExtra(EXTRA_DNS_CACHE_TTL) ?: DefaultProfile.production.dnsCacheTtl,
+                name = getStringExtra(EXTRA_PROFILE_NAME) ?: fallback.name,
+                serverUrl = getStringExtra(EXTRA_SERVER_URL) ?: fallback.serverUrl,
+                token = getStringExtra(EXTRA_TOKEN) ?: fallback.token,
+                socksListen = getStringExtra(EXTRA_SOCKS_LISTEN) ?: fallback.socksListen,
+                metricsListen = getStringExtra(EXTRA_METRICS_LISTEN) ?: fallback.metricsListen,
+                cidr = getStringExtra(EXTRA_CIDR) ?: fallback.cidr,
+                dns = getStringExtra(EXTRA_DNS) ?: fallback.dns,
+                ech = getStringExtra(EXTRA_ECH) ?: fallback.ech,
+                blockPorts = getStringExtra(EXTRA_BLOCK_PORTS) ?: fallback.blockPorts,
+                connections = getIntExtra(EXTRA_CONNECTIONS, fallback.connections),
+                insecure = getBooleanExtra(EXTRA_INSECURE, fallback.insecure),
+                fallback = getBooleanExtra(EXTRA_FALLBACK, fallback.fallback),
+                dialIPs = getStringExtra(EXTRA_DIAL_IPS) ?: fallback.dialIPs,
+                ipStrategy = getStringExtra(EXTRA_IP_STRATEGY) ?: fallback.ipStrategy,
+                dnsCacheTtl = getStringExtra(EXTRA_DNS_CACHE_TTL) ?: fallback.dnsCacheTtl,
             )
         }
     }

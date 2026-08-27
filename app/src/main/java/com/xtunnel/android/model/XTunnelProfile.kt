@@ -9,8 +9,9 @@ data class XTunnelProfile(
     val socksListen: String = "socks5://127.0.0.1:11080",
     val metricsListen: String = "",
     val cidr: String = "0.0.0.0/0,::/0",
-    val dns: String = "https://doh.pub/dns-query",
-    val ech: String = "cloudflare-ech.com",
+    // 点 7：不内置任何真实域名；dns/ech 留空，由用户在高级设置按需填写（空则走 sidecar 默认）。
+    val dns: String = "",
+    val ech: String = "",
     val blockPorts: String = "443",
     val connections: Int = 1,
     val insecure: Boolean = false,
@@ -22,59 +23,71 @@ data class XTunnelProfile(
 )
 
 object DefaultProfile {
-    // 生产默认结构：token 不写死进仓库，首次由用户填写。
-    val production = XTunnelProfile(
-        name = "Production",
-        serverUrl = "wss://xt.ipyx.eu.cc",
-        token = "",
-    )
+    // 点 7：不内置任何真实服务器地址/域名/token。新 profile 一律为空模板，由用户填写。
+    private var counter = 0
 
-    // 本地联调：连本机 x-tunnel 服务端自测。
-    val local = XTunnelProfile(
-        name = "Local test",
-        serverUrl = "ws://127.0.0.1:18080/tunnel",
-        token = "local-test-token",
-    )
+    fun newProfile(seed: Int? = null): XTunnelProfile {
+        val n = seed ?: ++counter
+        return XTunnelProfile(
+            name = "新的配置 $n",
+            serverUrl = "",
+            token = "",
+            ipStrategy = "4,6",
+            dnsCacheTtl = "5m",
+        )
+    }
+
+    // 旧数据迁移：不预置地址，仅作空模板占位。
+    val blank = newProfile(0).copy(name = "新配置")
 }
 
+// 配置身份标识：仅用于 UI 列表按名称去重校验（用户可自由重命名）。
+fun XTunnelProfile.profileId(): String = name
+
+/**
+ * 校验配置是否可保存/启动（点 4：提示语中文化）。
+ * serverUrl 允许为空——留空仅供保存草稿，启动时由 UI 侧「填写服务器地址」再拦。
+ */
 fun XTunnelProfile.validationError(): String? {
-    if (name.isBlank()) return "Profile name is required"
-    if (token.isBlank()) return "Token is required"
-    if (connections !in 1..16) return "Connections must be between 1 and 16"
-    if (blockPorts.isBlank()) return "UDP block ports are required"
+    if (name.isBlank()) return "配置名称不能为空"
+    if (token.isBlank()) return "Token 不能为空"
+    if (connections !in 1..16) return "连接数须在 1 到 16 之间"
+    if (blockPorts.isBlank()) return "UDP 阻断端口不能为空"
+
+    if (serverUrl.isBlank()) return "服务器地址不能为空"
 
     val server = runCatching { URI(serverUrl) }.getOrNull()
-        ?: return "Server URL is invalid"
+        ?: return "服务器地址格式无效"
     if (server.scheme !in setOf("ws", "wss")) {
-        return "Server URL must start with ws:// or wss://"
+        return "服务器地址须以 ws:// 或 wss:// 开头"
     }
-    if (server.host.isNullOrBlank()) return "Server URL host is required"
+    if (server.host.isNullOrBlank()) return "服务器地址缺少主机名"
 
     // 抗干扰参数校验：与 sidecar 的 flag 语义保持一致（ip 支持 IP/IP:port/合法主机名，逗号分隔）。
     // 这里只做宽松的非空条目校验，具体格式由 sidecar 权威校验并在运行时详情反馈，避免 UI 误拦合法值（如 IPv6）。
     if (dialIPs.isNotBlank()) {
         val entries = dialIPs.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-        if (entries.isEmpty()) return "Dial IPs must not contain empty entries"
-        if (entries.any { it.substringBefore(':').isBlank() }) return "Dial IP entry is invalid"
+        if (entries.isEmpty()) return "优选 IP 不能包含空条目"
+        if (entries.any { it.substringBefore(':').isBlank() }) return "优选 IP 条目无效"
     }
     if (ipStrategy !in setOf("", "4", "6", "4,6", "6,4")) {
-        return "IP strategy must be one of: (empty), 4, 6, 4,6, 6,4"
+        return "IP 栈须为：留空、4、6、4,6、6,4 之一"
     }
     runCatching { parseDnsCacheTtlToMillis(dnsCacheTtl) }.getOrElse {
-        return "DNS cache TTL is invalid (e.g. 5m, 30s or 0)"
+        return "DNS 缓存 TTL 无效（如 5m、30s 或 0）"
     }
 
     val socks = runCatching { URI(socksListen) }.getOrNull()
-        ?: return "SOCKS listen URL is invalid"
-    if (socks.scheme != "socks5") return "SOCKS listen must start with socks5://"
-    if (socks.host.isNullOrBlank()) return "SOCKS listen host is required"
-    if (socks.port !in 1..65535) return "SOCKS listen port is invalid"
+        ?: return "本地 SOCKS 地址无效"
+    if (socks.scheme != "socks5") return "本地 SOCKS 须以 socks5:// 开头"
+    if (socks.host.isNullOrBlank()) return "本地 SOCKS 缺少主机名"
+    if (socks.port !in 1..65535) return "本地 SOCKS 端口无效"
 
     if (metricsListen.isNotBlank()) {
         val metrics = runCatching { URI("tcp://$metricsListen") }.getOrNull()
-            ?: return "Metrics listen address is invalid"
+            ?: return "Metrics 监听地址无效"
         if (metrics.host.isNullOrBlank() || metrics.port !in 1..65535) {
-            return "Metrics listen address is invalid"
+            return "Metrics 监听地址无效"
         }
     }
 
