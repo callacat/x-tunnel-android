@@ -366,7 +366,6 @@ private fun ActionRow(
                 .clickable { onDisconnect() },
             contentAlignment = Alignment.Center,
         ) {
-            android.util.Log.e("XTunnelStop", "关闭 Box 已组合")
             Text(
                 text = "关闭",
                 modifier = Modifier.padding(vertical = 14.dp),
