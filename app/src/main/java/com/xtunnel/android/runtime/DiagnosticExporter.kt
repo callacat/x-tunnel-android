@@ -70,22 +70,23 @@ object DiagnosticExporter {
         return zipFile
     }
 
-    // 八轮修复·诊断包收崩溃日志：dump logcat 本应用进程的 crash 段。
-    // minSdk 23 无 READ_LOGS 权限时只能抓到自身 UID 的 logcat（Android 4.1+ 允许读自身进程日志）。
+    // 八轮修复·诊断包收崩溃日志。round7 修复：原 --pid=$pid 只抓当前进程，
+// crash 发生在上一进程（通知栏关闭崩溃后新进程 pid 不同）永远抓不到。
+// 改用 -b crash（Android 9+ 专用崩溃 buffer，含历史 FATAL EXCEPTION），
+// 回退到主 buffer 按 tag 过滤。
     private fun collectCrashLogcat(): String {
         return try {
-            val pid = android.os.Process.myPid()
-            val process = ProcessBuilder(
-                "logcat", "-d", "-v", "threadtime",
-                "--pid=$pid",
-                "AndroidRuntime:E", "libc:F", "DEBUG:F", "*:S",
-            ).redirectErrorStream(true).start()
+            val cmd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                listOf("logcat", "-d", "-b", "crash", "-v", "threadtime")
+            } else {
+                listOf("logcat", "-d", "-v", "threadtime", "AndroidRuntime:E", "libc:F", "DEBUG:F", "*:S")
+            }
+            val process = ProcessBuilder(cmd).redirectErrorStream(true).start()
             val out = process.inputStream.bufferedReader().use { it.readText() }
             process.waitFor()
-            // 截取最近 200 行，避免 zip 过大
             val lines = out.lineSequence().toList()
-            val recent = lines.takeLast(200)
-            if (recent.isEmpty()) "（无本进程崩溃日志）" else recent.joinToString("\n")
+            val recent = lines.takeLast(400)
+            if (recent.isEmpty()) "（无崩溃日志）" else recent.joinToString("\n")
         } catch (e: Exception) {
             "无法收集 logcat: ${e.message ?: e.javaClass.simpleName}"
         }

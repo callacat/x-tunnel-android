@@ -26,10 +26,9 @@ class XTunnelVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                // 点 6 修复：真正停止 sidecar 进程后再停服务。此前只 stopSelf()，
-                // 未杀 sidecar 子进程（进程残留、日志无 graceful shutdown 记录）。
-                // RuntimeManager.stop 内部会 kill 子进程 + 复位状态。
-                XTunnelRuntimeManager.get(this).stop()
+                // round7 修复：这里不再自己调 stop()——只 stopSelf()，由 onDestroy()
+                // 统一执行 stop（单一路径，消除 ACTION_STOP+onDestroy 双 stop 并发
+                // close JNI 的竞态）。START_NOT_STICKY 保证不会再被系统重启。
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -43,7 +42,7 @@ class XTunnelVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        XTunnelRuntimeManager.get(this).stop()
+        // round7：stop 统一由 onDestroy 处理，这里只 stopSelf（消除双 stop 竞态）
         stopSelf()
     }
 
@@ -209,10 +208,13 @@ class XTunnelVpnService : VpnService() {
         }
 
         fun stop(context: Context) {
-            // 六轮修复：App 内点「停止」按钮从 Activity context 出发，若 App 在后台
-            // （VPN 运行中切走/权限弹窗切后台）调 startService 会抛 IllegalStateException
-            // → 闪退。改 stopService（不区分前后台，触发 onDestroy → RuntimeManager.stop）。
-            context.stopService(Intent(context, XTunnelVpnService::class.java))
+            // round7 修复：UI 关闭与通知栏关闭统一走 ACTION_STOP 分支（startService），
+            // 保证行为一致。此前（六轮）改 stopService 对前台 VPN 服务无效——服务
+            // 未真正停止，sidecar 也没杀，导致「UI 关闭按钮点不动」。
+            // 后台 startService 受限时（Android 8.0+）回退 stopService，双保险防闪退。
+            val stopIntent = Intent(context, XTunnelVpnService::class.java).setAction(ACTION_STOP)
+            runCatching { context.startService(stopIntent) }
+                .onFailure { context.stopService(Intent(context, XTunnelVpnService::class.java)) }
         }
 
         private fun Intent?.profileOrDefault(): XTunnelProfile {
