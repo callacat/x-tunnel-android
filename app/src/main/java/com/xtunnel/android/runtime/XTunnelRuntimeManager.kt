@@ -11,6 +11,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class XTunnelRuntimeManager private constructor(context: Context) {
     private val appContext = context.applicationContext
@@ -41,6 +42,11 @@ class XTunnelRuntimeManager private constructor(context: Context) {
     @Volatile
     private var lastTrafficReceived: Long = -1L
 
+    // 停止幂等保护（A.1 通知栏关闭闪退）：ACTION_STOP 分支 stop() + stopSelf()→onDestroy 又 stop()
+    // 会起两个 stopBlocking 线程并发 close VpnDataPathController（JNI TProxyStopService 非线程安全）。
+    // 用 CAS 保证 stopBlocking 只真正执行一次，其余线程直接返回。
+    private val stopInProgress = AtomicBoolean(false)
+
     @Synchronized
     fun start(profile: XTunnelProfile, vpnService: VpnService? = null) {
         if (process?.isRunning() == true) {
@@ -61,6 +67,14 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             ),
         )
         LogStore.append(LogStore.Level.Info, "启动隧道：${profile.name}")
+
+        // A.4 强杀重启残留清理：force-stop 后 sidecar（libxtunnel.so 独立 native 进程）
+        // 可能还活着占着 SOCKS5/control 端口，导致二次启动冲突/无法访问外网。
+        // 启动前 pkill 掉残留（失败静默——幂等，正常启动无残留时 no-op）。
+        runCatching {
+            ProcessBuilder("sh", "-c", "pkill -f libxtunnel.so 2>/dev/null || true")
+                .redirectErrorStream(true).start().waitFor()
+        }
 
         executor.execute {
             runCatching {
@@ -173,36 +187,45 @@ class XTunnelRuntimeManager private constructor(context: Context) {
     }
 
     private fun stopBlocking() {
-        stopTrafficMonitor()
-        dataPathController?.close()
-        dataPathController = null
-        val ready = readyInfo
-        val bearer = token
-        if (ready != null && bearer.isNotBlank()) {
-            runCatching {
-                request(
-                    method = "POST",
-                    target = "${ready.controlUrl}/v1/runtime/stop",
-                    bearer = bearer,
-                )
-            }
+        // A.1：CAS 防并发——通知栏 ACTION_STOP 与 onDestroy 双 stop 会并发 close JNI，
+        // 只允许一个线程真正执行停止流程，其余直接返回（幂等）。
+        if (!stopInProgress.compareAndSet(false, true)) {
+            return
         }
-        val currentProcess = process
-        if (currentProcess != null && currentProcess.isRunning()) {
-            currentProcess.destroy()
-            if (!currentProcess.waitForExit(2_000L)) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    currentProcess.destroyForcibly()
-                } else {
-                    currentProcess.destroy()
+        try {
+            stopTrafficMonitor()
+            dataPathController?.close()
+            dataPathController = null
+            val ready = readyInfo
+            val bearer = token
+            if (ready != null && bearer.isNotBlank()) {
+                runCatching {
+                    request(
+                        method = "POST",
+                        target = "${ready.controlUrl}/v1/runtime/stop",
+                        bearer = bearer,
+                    )
                 }
             }
+            val currentProcess = process
+            if (currentProcess != null && currentProcess.isRunning()) {
+                currentProcess.destroy()
+                if (!currentProcess.waitForExit(2_000L)) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        currentProcess.destroyForcibly()
+                    } else {
+                        currentProcess.destroy()
+                    }
+                }
+            }
+            process = null
+            readyInfo = null
+            token = ""
+            lastTrafficSent = -1L
+            lastTrafficReceived = -1L
+        } finally {
+            stopInProgress.set(false)
         }
-        process = null
-        readyInfo = null
-        token = ""
-        lastTrafficSent = -1L
-        lastTrafficReceived = -1L
     }
 
     // 流量监控：周期拉 /v1/stats，把字节增量记入 LogStore，空转即自动停止。
