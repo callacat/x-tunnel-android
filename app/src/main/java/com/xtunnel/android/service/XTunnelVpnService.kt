@@ -75,7 +75,11 @@ class XTunnelVpnService : VpnService() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 cm.registerDefaultNetworkCallback(cb)
             } else {
-                cm.activeNetwork?.let { cm.registerNetworkCallback(it, cb) }
+                val net = cm.activeNetwork
+                if (net != null) {
+                    @Suppress("DEPRECATION")
+                    cm.registerNetworkCallback(net, cb)
+                }
             }
         }
     }
