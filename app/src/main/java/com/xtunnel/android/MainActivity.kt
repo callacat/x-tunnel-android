@@ -230,6 +230,7 @@ private fun DashboardScreen(
             ActionRow(
                 busy = busy,
                 running = running,
+                state = snapshot.state,
                 onConnect = {
                     if (
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -325,6 +326,7 @@ private fun ProfileSummaryCard(
 private fun ActionRow(
     busy: Boolean,
     running: Boolean,
+    state: RuntimeState,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -339,10 +341,11 @@ private fun ActionRow(
         ) {
             Text(text = "连接")
         }
-        // 点 6：关闭按钮在运行/忙碌时均可用，接 stop 链路
+        // 点 6（九轮修复）：关闭按钮只在「完全停止」时禁用，其余态（运行/连接中/停止中/失败）
+        // 都可点——stop 幂等安全，Failed 态点关闭能复位恢复，避免「连不上时按钮灰死」。
         OutlinedButton(
             modifier = Modifier.weight(1f),
-            enabled = running || busy,
+            enabled = state != RuntimeState.Stopped,
             onClick = onDisconnect,
         ) {
             Text(text = "关闭")
@@ -707,15 +710,22 @@ private fun LogScreen(onBack: () -> Unit) {
                 navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
                 actions = {
                     TextButton(onClick = {
-                        // 第 9 点：导出诊断包（流量统计 + 连接状态 + 日志 + 基础信息，token 脱敏）
+                        // 第 9 点：导出诊断包到 Download 目录（九轮：不依赖网络分享，可文件管理器手动发）
                         val runtime = XTunnelRuntimeManager.get(context)
-                        val uri = DiagnosticExporter.export(context, runtime) ?: return@TextButton
+                        val file = DiagnosticExporter.export(context, runtime) ?: return@TextButton
+                        // 存好后仍提供 FileProvider 分享（external files dir 兼容），同时弹 Toast 提示路径
+                        val uri = FileProvider.getUriForFile(
+                            context, context.packageName + ".fileprovider", file,
+                        )
                         val share = Intent(Intent.ACTION_SEND).apply {
                             type = "application/zip"
                             putExtra(Intent.EXTRA_STREAM, uri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
-                        context.startActivity(Intent.createChooser(share, "导出诊断包"))
+                        context.startActivity(Intent.createChooser(share, "导出诊断包（已存 Download）"))
+                        android.widget.Toast.makeText(
+                            context, "诊断包已存：${file.absolutePath}", android.widget.Toast.LENGTH_LONG,
+                        ).show()
                     }) { Text("诊断包") }
                     TextButton(onClick = {
                         LogStore.clear()

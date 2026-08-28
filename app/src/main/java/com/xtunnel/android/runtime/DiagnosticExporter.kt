@@ -1,9 +1,7 @@
 package com.xtunnel.android.runtime
 
 import android.content.Context
-import android.net.Uri
 import android.os.Build
-import androidx.core.content.FileProvider
 import com.xtunnel.android.model.ThemePrefs
 import java.io.File
 import java.text.SimpleDateFormat
@@ -24,8 +22,11 @@ import java.util.zip.ZipOutputStream
  */
 object DiagnosticExporter {
 
-    fun export(context: Context, runtime: XTunnelRuntimeManager): Uri? {
-        val exportDir = File(context.filesDir, "diagnostics")
+    fun export(context: Context, runtime: XTunnelRuntimeManager): File? {
+        // 九轮修复：诊断包存 App 专属外部 Download 目录（getExternalFilesDir/Download），
+        // 文件管理器可直接访问、不依赖 FileProvider 网络分享（东哥可手动发文件）。
+        val exportDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+            ?: File(context.filesDir, "diagnostics").also { it.mkdirs() }
         exportDir.mkdirs()
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val zipFile = File(exportDir, "x-tunnel-diag-${stamp}.zip")
@@ -65,12 +66,8 @@ object DiagnosticExporter {
             zos.closeEntry()
         }
 
-        // 经 FileProvider 生成分享 URI（与日志导出同款）
-        return FileProvider.getUriForFile(
-            context,
-            context.packageName + ".fileprovider",
-            zipFile,
-        )
+        // 直接返回文件路径（存 Download 目录，文件管理器可访问），不再依赖 FileProvider 分享。
+        return zipFile
     }
 
     // 八轮修复·诊断包收崩溃日志：dump logcat 本应用进程的 crash 段。
