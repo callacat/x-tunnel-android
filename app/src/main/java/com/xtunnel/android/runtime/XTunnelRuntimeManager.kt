@@ -135,6 +135,8 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         readyInfo = ready
         token = bearer
         checkHealth(ready.controlUrl)
+        // 三轮根因：等数据通道 smux 真正就绪再启动数据面（而不是 ready.json 一出现就启）。
+        waitForChannelsReady(ready.controlUrl, bearer)
         val dataPathResult = if (vpnService != null) {
                 VpnDataPathController(vpnService).also { dataPathController = it }.start(profile)
             } else {
@@ -209,6 +211,39 @@ class XTunnelRuntimeManager private constructor(context: Context) {
 
     private fun checkHealth(controlUrl: String) {
         request("GET", "$controlUrl/v1/health", "")
+    }
+
+    // 三轮根因修复（2026-08-28 东哥反馈「连上但上不了网」）：ready.json 只表示
+    // sidecar 进程/控制面就绪，smux 数据通道要等 DNS 解析 + v2 协议协商完成（约 1~2s）。
+    // 若立刻启动数据面，首批流量全部撞「无可用 smux 通道」→ 用户打不开外网。
+    // 此处轮询 /v1/status，等 client.channels 至少一个 up=true 再放行，超时降级放行
+    // （避免卡死：真失败走 sidecar 自身重连，App 记录超时日志供排查）。
+    private fun waitForChannelsReady(controlUrl: String, bearer: String) {
+        val deadline = System.currentTimeMillis() + CHANNELS_READY_TIMEOUT_MILLIS
+        var loggedWaiting = false
+        while (System.currentTimeMillis() < deadline) {
+            val status = runCatching { request("GET", "$controlUrl/v1/status", bearer) }.getOrNull()
+            val hasUp = status?.let { body ->
+                runCatching {
+                    val obj = JSONObject(body)
+                    val client = obj.optJSONObject("client")
+                    val channels = client?.optJSONArray("channels")
+                    (0 until (channels?.length() ?: 0)).any { i ->
+                        channels?.getJSONObject(i)?.optBoolean("up", false) == true
+                    }
+                }.getOrDefault(false)
+            } ?: false
+            if (hasUp) {
+                LogStore.append(LogStore.Level.Info, "数据通道已就绪（smux up），启动数据面")
+                return
+            }
+            if (!loggedWaiting) {
+                LogStore.append(LogStore.Level.Info, "等待数据通道就绪（smux up）…")
+                loggedWaiting = true
+            }
+            Thread.sleep(200)
+        }
+        LogStore.append(LogStore.Level.Error, "等待数据通道就绪超时（≥${CHANNELS_READY_TIMEOUT_MILLIS}ms），降级放行数据面")
     }
 
     private fun request(method: String, target: String, bearer: String): String {
@@ -311,6 +346,7 @@ class XTunnelRuntimeManager private constructor(context: Context) {
     companion object {
         private const val NATIVE_EXECUTABLE = "libxtunnel.so"
         private const val READY_TIMEOUT_MILLIS = 10_000L
+        private const val CHANNELS_READY_TIMEOUT_MILLIS = 15_000L
         private const val HTTP_TIMEOUT_MILLIS = 2_000L
         private const val MAX_LOG_LINES = 200
         private const val MAX_DETAIL_CHARS = 160
