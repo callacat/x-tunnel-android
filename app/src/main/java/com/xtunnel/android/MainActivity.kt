@@ -347,10 +347,10 @@ private fun ActionRow(
         ) {
             Text(text = "连接")
         }
-        // round8 修复：关闭按钮始终可点（enabled=true），stop 幂等安全。
-        // 不再依赖 state 判断——state 同步竞态会让按钮在「连接后仍显示 Stopped」时
-        // 被 disabled，导致「UI 关闭按钮点不动/无效」。停止态点关闭是 no-op 无害。
-        OutlinedButton(
+        // round8b 修复：关闭按钮改用与「连接」完全相同的 Button（排除 OutlinedButton
+        // 组件在 weight(1f) Row 布局下 onClick 不触发的问题——实测连接按钮同结构能点，
+        // 关闭按钮 OutlinedButton 点不动，ui dump 显示二者更确定是组件差异）。
+        Button(
             modifier = Modifier.weight(1f),
             enabled = true,
             onClick = onDisconnect,

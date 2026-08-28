@@ -11,7 +11,7 @@ val appVersionCode = providers.environmentVariable("XTUNNEL_ANDROID_VERSION_CODE
     .map(String::toInt)
     .orElse(1)
 val appVersionName = providers.environmentVariable("XTUNNEL_ANDROID_VERSION_NAME")
-    .orElse("0.1.0-round7")
+    .orElse("0.1.0-round8")
 
 android {
     namespace = "com.xtunnel.android"
