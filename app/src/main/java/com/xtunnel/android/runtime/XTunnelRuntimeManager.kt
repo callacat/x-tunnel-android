@@ -266,7 +266,16 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                     LogStore.append(LogStore.Level.Info, "流量监控空闲 10 分钟，自动停止")
                     return@Thread
                 }
-                Thread.sleep(TRAFFIC_POLL_MILLIS)
+                // round9 修复：catch InterruptedException——stopTrafficMonitor() 调
+                // interrupt() 时 sleep 抛 InterruptedException，若未捕获会被 Android 记
+                // 为 FATAL EXCEPTION（x-tunnel-traffic 线程未捕获异常），累积后 stop 回调
+                // 异常 → 关闭按钮闪退。这里捕获后恢复中断标志并优雅退出。
+                try {
+                    Thread.sleep(TRAFFIC_POLL_MILLIS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return@Thread
+                }
             }
         }.apply {
             name = "x-tunnel-traffic"

@@ -344,9 +344,15 @@ private fun ActionRow(
         // round8d 修复：放弃 Material3 Button/OutlinedButton（CT107 实测「连接」能点
         // 「关闭」点不动的语义合并 bug——关闭按钮被空白 clickable View 覆盖吞点击），
         // 改用 Box + Modifier.clickable 自管理点击，彻底绕开编译期语义合并缺陷。
+        // round9 修复：加背景色+圆角，解决夜间模式按钮"隐形"（对比度不足）。
+        val connectBg = if (!busy && !running) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.surfaceVariant
+        val connectFg = if (!busy && !running) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant
         Box(
             modifier = Modifier
                 .weight(1f)
+                .background(connectBg, RoundedCornerShape(8.dp))
                 .clickable(enabled = !busy && !running) { onConnect() },
             contentAlignment = Alignment.Center,
         ) {
@@ -354,13 +360,13 @@ private fun ActionRow(
                 text = "连接",
                 modifier = Modifier.padding(vertical = 14.dp),
                 fontWeight = FontWeight.SemiBold,
-                color = if (!busy && !running) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = connectFg,
             )
         }
         Box(
             modifier = Modifier
                 .weight(1f)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
                 .clickable { onDisconnect() },
             contentAlignment = Alignment.Center,
         ) {
