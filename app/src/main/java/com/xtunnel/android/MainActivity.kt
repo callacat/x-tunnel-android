@@ -12,7 +12,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -340,22 +343,36 @@ private fun ActionRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Button(
-            modifier = Modifier.weight(1f),
-            enabled = !busy && !running,
-            onClick = onConnect,
+        // round8d 修复：放弃 Material3 Button/OutlinedButton（CT107 实测「连接」能点
+        // 「关闭」点不动的语义合并 bug——关闭按钮被空白 clickable View 覆盖吞点击），
+        // 改用 Box + Modifier.clickable 自管理点击，彻底绕开编译期语义合并缺陷。
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(enabled = !busy && !running) { onConnect() },
+            contentAlignment = Alignment.Center,
         ) {
-            Text(text = "连接")
+            Text(
+                text = "连接",
+                modifier = Modifier.padding(vertical = 14.dp),
+                fontWeight = FontWeight.SemiBold,
+                color = if (!busy && !running) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        // round8b 修复：关闭按钮改用与「连接」完全相同的 Button（排除 OutlinedButton
-        // 组件在 weight(1f) Row 布局下 onClick 不触发的问题——实测连接按钮同结构能点，
-        // 关闭按钮 OutlinedButton 点不动，ui dump 显示二者更确定是组件差异）。
-        Button(
-            modifier = Modifier.weight(1f),
-            enabled = true,
-            onClick = onDisconnect,
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .clickable { onDisconnect() },
+            contentAlignment = Alignment.Center,
         ) {
-            Text(text = "关闭")
+            android.util.Log.e("XTunnelStop", "关闭 Box 已组合")
+            Text(
+                text = "关闭",
+                modifier = Modifier.padding(vertical = 14.dp),
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
