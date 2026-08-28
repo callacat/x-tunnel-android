@@ -70,17 +70,13 @@ class XTunnelVpnService : VpnService() {
                 LogStore.append(LogStore.Level.Info, "网络能力变化: ${describeNetwork(cm, network)}")
             }
         }.also { cb ->
-            // 用默认网络回调（API 24+），飞行模式切换时 onAvailable/onLost 都会触发；
-            // API 23 降级为 activeNetwork 单网络回调。
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                cm.registerDefaultNetworkCallback(cb)
-            } else {
-                val net = cm.activeNetwork
-                if (net != null) {
-                    @Suppress("DEPRECATION")
-                    cm.registerNetworkCallback(net, cb)
-                }
-            }
+            // 用默认网络回调（API 24+），飞行模式切换时 onAvailable/onLost 都会触发。
+        // API < 24（minSdk 23）不监听网络事件（东哥真机 Android 15 无影响）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            cm.registerDefaultNetworkCallback(cb)
+        } else {
+            LogStore.append(LogStore.Level.Info, "网络切换监听需要 Android 7.0+，本机不启用")
+        }
         }
     }
 
