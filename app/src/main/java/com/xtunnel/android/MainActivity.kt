@@ -62,10 +62,12 @@ import com.xtunnel.android.model.ThemePrefs
 import com.xtunnel.android.model.ProfileStore
 import com.xtunnel.android.model.XTunnelProfile
 import com.xtunnel.android.model.validationError
+import com.xtunnel.android.runtime.DiagnosticExporter
 import com.xtunnel.android.runtime.LogStore
 import com.xtunnel.android.runtime.RuntimeSnapshot
 import com.xtunnel.android.runtime.RuntimeState
 import com.xtunnel.android.runtime.RuntimeStateStore
+import com.xtunnel.android.runtime.XTunnelRuntimeManager
 import com.xtunnel.android.service.XTunnelVpnService
 import kotlinx.coroutines.delay
 
@@ -696,6 +698,17 @@ private fun LogScreen(onBack: () -> Unit) {
                 ),
                 navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
                 actions = {
+                    TextButton(onClick = {
+                        // 第 9 点：导出诊断包（流量统计 + 连接状态 + 日志 + 基础信息，token 脱敏）
+                        val runtime = XTunnelRuntimeManager.get(context)
+                        val uri = DiagnosticExporter.export(context, runtime) ?: return@TextButton
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/zip"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(share, "导出诊断包"))
+                    }) { Text("诊断包") }
                     TextButton(onClick = {
                         LogStore.clear()
                         lines = emptyList()

@@ -303,6 +303,45 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         LogStore.append(LogStore.Level.Error, "等待数据通道就绪超时（≥${CHANNELS_READY_TIMEOUT_MILLIS}ms），降级放行数据面")
     }
 
+    // 第 9 点：诊断数据采集——返回 JSON 文本，供导出诊断包（zip）拼装。
+    // 含流量统计(/v1/stats)、连接状态(/v1/status)、基础信息（token 脱敏）。
+    fun collectDiagnostics(): String {
+        val ready = readyInfo
+        val bearer = token
+        var trafficText: String? = null
+        var statusText: String? = null
+        if (ready != null && bearer.isNotBlank()) {
+            trafficText = runCatching { request("GET", "${ready.controlUrl}/v1/stats", bearer) }.getOrNull()
+            statusText = runCatching { request("GET", "${ready.controlUrl}/v1/status", bearer) }.getOrNull()
+        }
+        val trafficObj = runCatching { trafficText?.let { JSONObject(it) } }.getOrNull()
+        val statusObj = runCatching { statusText?.let { JSONObject(it) } }.getOrNull()
+        return JSONObject().apply {
+            put("collected_at", System.currentTimeMillis())
+            put("process_running", process?.isRunning() == true)
+            put("pid", ready?.pid ?: -1)
+            put("runtime_state", RuntimeStateStore.snapshot().state.name)
+            // 流量（区分断点：↑恒0=数据面不转；↑>0↓=0=服务端不回）
+            val t = trafficObj?.optJSONObject("traffic")
+            put("traffic_bytes_sent", t?.optLong("bytes_sent", -1L) ?: -1L)
+            put("traffic_bytes_received", t?.optLong("bytes_received", -1L) ?: -1L)
+            val counters = trafficObj?.optJSONObject("counters")
+            put("client_reconnects_total", counters?.optLong("client_reconnects_total", -1L) ?: -1L)
+            // 连接状态（channels up/down）
+            val channels = statusObj?.optJSONObject("client")?.optJSONArray("channels")
+            val chArray = org.json.JSONArray()
+            for (i in 0 until (channels?.length() ?: 0)) {
+                val c = channels?.getJSONObject(i)
+                chArray.put(org.json.JSONObject().apply {
+                    put("channel", c?.optInt("channel", -1) ?: -1)
+                    put("up", c?.optBoolean("up", false) ?: false)
+                    put("rtt_seconds", c?.optDouble("rtt_seconds", -1.0) ?: -1.0)
+                })
+            }
+            put("channels", chArray)
+        }.toString(2)
+    }
+
     private fun request(method: String, target: String, bearer: String): String {
         val connection = (URL(target).openConnection() as HttpURLConnection).apply {
             requestMethod = method
