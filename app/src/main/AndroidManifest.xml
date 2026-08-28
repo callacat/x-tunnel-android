@@ -9,9 +9,16 @@
         android:minSdkVersion="34" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 分应用代理：枚举所有已安装应用（Android 11+ package visibility）。
-         使用 QUERY_ALL_PACKAGES，用户勾选哪些 App 走隧道；不申请会只能看到部分应用。 -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- 分应用代理·应用选择器：API 30+ 包可见性过滤下，声明 MAIN/LAUNCHER intent
+         即「可查询有启动器入口的应用」——恰好是选择器要列的集合（无 launcher 入口的
+         纯后台/系统组件本就不该出现）。低版本自动忽略，无需版本分支。
+         不用 QUERY_ALL_PACKAGES（lint 致命错误 + Play 政策 VPN 类不许可）。 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"
