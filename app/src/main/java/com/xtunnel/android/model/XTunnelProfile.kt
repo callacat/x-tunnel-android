@@ -58,6 +58,11 @@ fun XTunnelProfile.validationError(): String? {
     if (connections !in 1..16) return "连接数须在 1 到 16 之间"
     if (blockPorts.isBlank()) return "UDP 阻断端口不能为空"
 
+    // 分应用代理白名单：开启后至少要勾选一个应用，否则会退回全局代理（语义反转）。
+    if (perAppEnabled && allowedApps.isEmpty()) {
+        return "分应用代理已开启，但未勾选任何应用；请至少勾选一个，或关闭分应用代理"
+    }
+
     if (serverUrl.isBlank()) return "服务器地址不能为空"
 
     val server = runCatching { URI(serverUrl) }.getOrNull()

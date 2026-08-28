@@ -61,12 +61,20 @@ class VpnDataPathController(private val service: VpnService) {
             // 分应用代理·白名单模式：仅白名单内的应用走隧道，其余（含壳自身与
             // libhev-socks5-tunnel / libxtunnel 子进程，同 UID）直连物理网。
             // 壳与 sidecar 不在白名单 → 隧道出站流量天然绕过 TUN，不环路，无需 protect。
+            // VpnService 语义：只要调用过一次 addAllowedApplication 即进入白名单模式；
+            // 若列表为空会退回全局代理（语义反转），故这里硬性要求至少一条。
+            if (profile.allowedApps.isEmpty()) {
+                return VpnDataPathResult(
+                    state = VpnDataPathState.Failed,
+                    detail = "分应用代理已开启但未勾选任何应用",
+                )
+            }
             // addAllowedApplication 对未安装/不可查包名抛 NameNotFoundException，逐包跳过。
             profile.allowedApps.forEach { pkg ->
                 try {
                     builder.addAllowedApplication(pkg)
                 } catch (_: PackageManager.NameNotFoundException) {
-                    // 未安装的应用跳过；白名单为空时 = 全部直连（等同隧道空转）。
+                    // 未安装的应用跳过。
                 }
             }
         } else {
