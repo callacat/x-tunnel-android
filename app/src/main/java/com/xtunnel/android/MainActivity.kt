@@ -230,7 +230,6 @@ private fun DashboardScreen(
             ActionRow(
                 busy = busy,
                 running = running,
-                state = snapshot.state,
                 onConnect = {
                     if (
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -243,6 +242,11 @@ private fun DashboardScreen(
                     }
                 },
                 onDisconnect = {
+                    // round8 修复：UI 关闭直接调 RuntimeManager.stop() 同步杀 sidecar+关 tun，
+                    // 不再依赖 startService/stopService 的 Service 生命周期（前后台限制导致
+                    // startService 被拒后回退 stopService 又对前台 VPN 服务无效 → 关闭无效）。
+                    // 然后 stopService 收尾（移除前台通知、停止 VpnService）。
+                    XTunnelRuntimeManager.get(context).stop()
                     XTunnelVpnService.stop(context)
                 },
             )
@@ -326,7 +330,6 @@ private fun ProfileSummaryCard(
 private fun ActionRow(
     busy: Boolean,
     running: Boolean,
-    state: RuntimeState,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -341,11 +344,12 @@ private fun ActionRow(
         ) {
             Text(text = "连接")
         }
-        // 点 6（九轮修复）：关闭按钮只在「完全停止」时禁用，其余态（运行/连接中/停止中/失败）
-        // 都可点——stop 幂等安全，Failed 态点关闭能复位恢复，避免「连不上时按钮灰死」。
+        // round8 修复：关闭按钮始终可点（enabled=true），stop 幂等安全。
+        // 不再依赖 state 判断——state 同步竞态会让按钮在「连接后仍显示 Stopped」时
+        // 被 disabled，导致「UI 关闭按钮点不动/无效」。停止态点关闭是 no-op 无害。
         OutlinedButton(
             modifier = Modifier.weight(1f),
-            enabled = state != RuntimeState.Stopped,
+            enabled = true,
             onClick = onDisconnect,
         ) {
             Text(text = "关闭")
