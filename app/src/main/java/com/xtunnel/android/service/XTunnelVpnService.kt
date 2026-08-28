@@ -59,7 +59,7 @@ class XTunnelVpnService : VpnService() {
     private fun registerNetworkCallback() {
         unregisterNetworkCallback()
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
+        val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 LogStore.append(LogStore.Level.Info, "网络可用: ${describeNetwork(cm, network)}")
             }
@@ -69,14 +69,14 @@ class XTunnelVpnService : VpnService() {
             override fun onCapabilitiesChanged(network: Network, caps: android.net.NetworkCapabilities) {
                 LogStore.append(LogStore.Level.Info, "网络能力变化: ${describeNetwork(cm, network)}")
             }
-        }.also { cb ->
-            // 用默认网络回调（API 24+），飞行模式切换时 onAvailable/onLost 都会触发。
-        // API < 24（minSdk 23）不监听网络事件（东哥真机 Android 15 无影响）。
+        }
+        networkCallback = cb
+        // 用默认网络回调监听网络切换（飞行模式开关 = 蜂窝重连）。
+        // API < 24（minSdk 23）不监听（东哥真机 Android 15 无影响）。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             cm.registerDefaultNetworkCallback(cb)
         } else {
             LogStore.append(LogStore.Level.Info, "网络切换监听需要 Android 7.0+，本机不启用")
-        }
         }
     }
 
