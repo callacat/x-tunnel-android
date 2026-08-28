@@ -181,6 +181,8 @@ class XTunnelVpnService : VpnService() {
         private const val EXTRA_DIAL_IPS = "dial_ips"
         private const val EXTRA_IP_STRATEGY = "ip_strategy"
         private const val EXTRA_DNS_CACHE_TTL = "dns_cache_ttl"
+        private const val EXTRA_PER_APP_ENABLED = "per_app_enabled"
+        private const val EXTRA_ALLOWED_APPS = "allowed_apps"
 
         fun start(context: Context, profile: XTunnelProfile) {
             val intent = Intent(context, XTunnelVpnService::class.java)
@@ -200,6 +202,8 @@ class XTunnelVpnService : VpnService() {
                 .putExtra(EXTRA_DIAL_IPS, profile.dialIPs)
                 .putExtra(EXTRA_IP_STRATEGY, profile.ipStrategy)
                 .putExtra(EXTRA_DNS_CACHE_TTL, profile.dnsCacheTtl)
+                .putExtra(EXTRA_PER_APP_ENABLED, profile.perAppEnabled)
+                .putExtra(EXTRA_ALLOWED_APPS, profile.allowedApps.toTypedArray())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -236,6 +240,8 @@ class XTunnelVpnService : VpnService() {
                 dialIPs = getStringExtra(EXTRA_DIAL_IPS) ?: fallback.dialIPs,
                 ipStrategy = getStringExtra(EXTRA_IP_STRATEGY) ?: fallback.ipStrategy,
                 dnsCacheTtl = getStringExtra(EXTRA_DNS_CACHE_TTL) ?: fallback.dnsCacheTtl,
+                perAppEnabled = getBooleanExtra(EXTRA_PER_APP_ENABLED, fallback.perAppEnabled),
+                allowedApps = getStringArrayExtra(EXTRA_ALLOWED_APPS)?.toSet() ?: fallback.allowedApps,
             )
         }
     }

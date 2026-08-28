@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -51,6 +57,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -58,8 +65,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.Alignment
 import com.xtunnel.android.model.DefaultProfile
+import com.xtunnel.android.model.InstalledApps
 import com.xtunnel.android.model.ThemeMode
 import com.xtunnel.android.model.ThemePrefs
 import com.xtunnel.android.model.ProfileStore
@@ -87,6 +96,7 @@ class MainActivity : ComponentActivity() {
 private enum class Screen {
     Dashboard,
     Profiles,
+    PerApp,
     Logs,
 }
 
@@ -124,10 +134,12 @@ private fun RootNav(onThemeChange: (ThemeMode) -> Unit) {
     when (screen) {
         Screen.Dashboard -> DashboardScreen(
             onOpenProfiles = { screen = Screen.Profiles },
+            onOpenPerApp = { screen = Screen.PerApp },
             onOpenLogs = { screen = Screen.Logs },
             onThemeChange = onThemeChange,
         )
         Screen.Profiles -> ProfileListScreen(onBack = { screen = Screen.Dashboard })
+        Screen.PerApp -> PerAppScreen(onBack = { screen = Screen.Dashboard })
         Screen.Logs -> LogScreen(onBack = { screen = Screen.Dashboard })
     }
 }
@@ -136,6 +148,7 @@ private fun RootNav(onThemeChange: (ThemeMode) -> Unit) {
 @Composable
 private fun DashboardScreen(
     onOpenProfiles: () -> Unit,
+    onOpenPerApp: () -> Unit,
     onOpenLogs: () -> Unit,
     onThemeChange: (ThemeMode) -> Unit,
 ) {
@@ -210,6 +223,7 @@ private fun DashboardScreen(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
                 actions = {
+                    TextButton(onClick = onOpenPerApp) { Text("分应用") }
                     TextButton(onClick = onOpenLogs) { Text("日志") }
                     TextButton(onClick = onOpenProfiles) { Text("配置") }
                 },
@@ -229,6 +243,11 @@ private fun DashboardScreen(
                 profile = activeProfile,
                 locked = running,
                 onOpenProfiles = onOpenProfiles,
+            )
+            PerAppCard(
+                profile = activeProfile,
+                locked = running,
+                onOpenPerApp = onOpenPerApp,
             )
             ActionRow(
                 busy = busy,
@@ -326,6 +345,235 @@ private fun ProfileSummaryCard(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onOpenProfiles) { Text("管理配置") }
             }
+        }
+    }
+}
+
+// 分应用代理·Dashboard 入口卡片：展示当前配置的白名单状态与勾选数量。
+@Composable
+private fun PerAppCard(
+    profile: XTunnelProfile?,
+    locked: Boolean,
+    onOpenPerApp: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "分应用代理",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (profile == null) {
+                Text("请先在「配置」页添加并选择一个服务器配置")
+            } else {
+                val count = profile.allowedApps.size
+                if (profile.perAppEnabled) {
+                    Text("白名单模式：已勾选 $count 个应用走隧道，其余应用直连")
+                } else {
+                    Text("已关闭：所有应用走隧道（全局代理）")
+                }
+                if (locked) {
+                    Text("运行中已锁定，停止后可调整；修改后需重启连接生效", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onOpenPerApp) { Text("设置分应用") }
+            }
+        }
+    }
+}
+
+// 分应用代理·设置页：开关 + 已安装应用列表（图标+名称+包名，勾选=走隧道）。
+// 白名单模式：勾选应用走隧道、未勾选直连；壳自身不在候选列表（避免误勾导致隧道流量自环）。
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PerAppScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var profile by remember { mutableStateOf(ProfileStore.loadActive(context)) }
+    var enabled by remember { mutableStateOf(profile?.perAppEnabled ?: false) }
+    var allowed by remember { mutableStateOf(profile?.allowedApps ?: emptySet()) }
+    val selfPackage = remember { context.packageName }
+    val apps = remember {
+        InstalledApps.scan(context, excludes = setOf(selfPackage))
+    }
+    val running = remember { mutableStateOf(false) }
+
+    // 页面可见期间刷新运行态，避免切换配置/连接后状态陈旧。
+    LaunchedEffect(Unit) {
+        while (true) {
+            running.value = RuntimeStateStore.snapshot().state == RuntimeState.Ready
+            delay(1_000)
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("分应用代理") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
+            )
+        },
+    ) { contentPadding ->
+        val current = profile
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (current == null) {
+                Text("尚未选择服务器配置，请先到「配置」页添加", color = MaterialTheme.colorScheme.error)
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column {
+                                Text(
+                                    "分应用代理（白名单）",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "开启后仅下方勾选的应用走隧道，其余直连",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                            Switch(checked = enabled, onCheckedChange = { enabled = it })
+                        }
+                        if (running.value) {
+                            Text(
+                                "隧道运行中已锁定；修改需停止后生效，或先停止再改",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        Text(
+                            "已选 ${allowed.size} 个应用",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+
+                if (enabled) {
+                    Text(
+                        "勾选走隧道 / 取消勾选直连的应用",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (apps.isEmpty()) {
+                        Text("未找到可代理的第三方应用（需已安装且有启动入口与联网权限）")
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.weight(1f, fill = true),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            items(apps, key = { it.packageName }) { app ->
+                                AppRow(
+                                    label = app.label,
+                                    packageName = app.packageName,
+                                    icon = app.icon(context),
+                                    checked = app.packageName in allowed,
+                                    onToggle = { checked ->
+                                        allowed = if (checked) allowed + app.packageName
+                                        else allowed - app.packageName
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !running.value,
+                    onClick = {
+                        val updated = current.copy(
+                            perAppEnabled = enabled,
+                            allowedApps = allowed,
+                        )
+                        ProfileStore.saveProfiles(
+                            context,
+                            ProfileStore.loadProfiles(context).map { if (it.name == current.name) updated else it },
+                            current.name,
+                        )
+                        profile = updated
+                        android.widget.Toast.makeText(context, "已保存，重启连接后生效", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                ) {
+                    Text("保存并生效")
+                }
+            }
+        }
+    }
+}
+
+// 单个应用行：图标 + 名称 + 包名 + 勾选框。
+@Composable
+private fun AppRow(
+    label: String,
+    packageName: String,
+    icon: Drawable?,
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggle(!checked) },
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val bitmap = icon?.let {
+                runCatching { it.toBitmap(48, 48) }.getOrNull()
+            }
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                )
+            } else {
+                Spacer(modifier = Modifier.size(40.dp))
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+            ) {
+                Text(label, fontWeight = FontWeight.Medium)
+                Text(
+                    packageName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Checkbox(checked = checked, onCheckedChange = onToggle)
         }
     }
 }

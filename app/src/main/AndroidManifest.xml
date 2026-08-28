@@ -9,6 +9,10 @@
         android:minSdkVersion="34" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 分应用代理：枚举所有已安装应用（Android 11+ package visibility）。
+         使用 QUERY_ALL_PACKAGES，用户勾选哪些 App 走隧道；不申请会只能看到部分应用。 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_vpn_key"

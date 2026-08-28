@@ -62,6 +62,8 @@ object ProfileStore {
         put("dial_ips", profile.dialIPs)
         put("ip_strategy", profile.ipStrategy)
         put("dns_cache_ttl", profile.dnsCacheTtl)
+        put("per_app_enabled", profile.perAppEnabled)
+        put("allowed_apps", JSONArray().apply { profile.allowedApps.forEach { put(it) } })
     }
 
     fun fromJson(json: JSONObject): XTunnelProfile = json.let {
@@ -81,6 +83,12 @@ object ProfileStore {
             dialIPs = it.optString("dial_ips", ""),
             ipStrategy = it.optString("ip_strategy", "4,6"),
             dnsCacheTtl = it.optString("dns_cache_ttl", "5m"),
+            perAppEnabled = it.optBoolean("per_app_enabled", false),
+            allowedApps = run {
+                val arr = it.optJSONArray("allowed_apps")
+                if (arr == null) emptySet()
+                else buildSet { for (i in 0 until arr.length()) add(arr.optString(i)) }
+            },
         )
     }
 }

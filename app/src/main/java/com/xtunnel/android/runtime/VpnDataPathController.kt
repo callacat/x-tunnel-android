@@ -57,10 +57,25 @@ class VpnDataPathController(private val service: VpnService) {
             .addRoute("0.0.0.0", 0)
             .addDnsServer(DEFAULT_DNS)
 
-        try {
-            builder.addDisallowedApplication(service.packageName)
-        } catch (_: PackageManager.NameNotFoundException) {
-            // The current package should exist; keep setup resilient for unusual test contexts.
+        if (profile.perAppEnabled) {
+            // 分应用代理·白名单模式：仅白名单内的应用走隧道，其余（含壳自身与
+            // libhev-socks5-tunnel / libxtunnel 子进程，同 UID）直连物理网。
+            // 壳与 sidecar 不在白名单 → 隧道出站流量天然绕过 TUN，不环路，无需 protect。
+            // addAllowedApplication 对未安装/不可查包名抛 NameNotFoundException，逐包跳过。
+            profile.allowedApps.forEach { pkg ->
+                try {
+                    builder.addAllowedApplication(pkg)
+                } catch (_: PackageManager.NameNotFoundException) {
+                    // 未安装的应用跳过；白名单为空时 = 全部直连（等同隧道空转）。
+                }
+            }
+        } else {
+            // 全局代理模式：所有应用走隧道，仅排除壳自身，避免自环。
+            try {
+                builder.addDisallowedApplication(service.packageName)
+            } catch (_: PackageManager.NameNotFoundException) {
+                // The current package should exist; keep setup resilient for unusual test contexts.
+            }
         }
 
         return builder.establish() ?: error("Android 拒绝了 VpnService.Builder.establish()")

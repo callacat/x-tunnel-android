@@ -20,6 +20,10 @@ data class XTunnelProfile(
     val dialIPs: String = "",
     val ipStrategy: String = "4,6",
     val dnsCacheTtl: String = "5m",
+    // 分应用代理（白名单模式）：perAppEnabled 开启后，仅 allowedApps 内的包走隧道，其余直连。
+    // allowedApps 存包名集合；壳自身与 native 子进程不在白名单内 → 天然直连物理网，隧道流量不环路。
+    val perAppEnabled: Boolean = false,
+    val allowedApps: Set<String> = emptySet(),
 )
 
 object DefaultProfile {
