@@ -249,11 +249,9 @@ private fun DashboardScreen(
                     // 不再依赖 startService/stopService 的 Service 生命周期（前后台限制导致
                     // startService 被拒后回退 stopService 又对前台 VPN 服务无效 → 关闭无效）。
                     // 然后 stopService 收尾（移除前台通知、停止 VpnService）。
-                    android.util.Log.e("XTunnelStop", "onDisconnect 触发，开始停止")
+                    android.widget.Toast.makeText(context, "正在停止隧道…", android.widget.Toast.LENGTH_SHORT).show()
                     XTunnelRuntimeManager.get(context).stop()
-                    android.util.Log.e("XTunnelStop", "RuntimeManager.stop() 已调用")
                     XTunnelVpnService.stop(context)
-                    android.util.Log.e("XTunnelStop", "VpnService.stop() 已调用")
                 },
             )
             ThemeCard(themeMode, onThemeChange)
