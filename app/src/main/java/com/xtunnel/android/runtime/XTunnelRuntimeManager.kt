@@ -128,6 +128,10 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         tokenFile.delete()
         configFile.writeText(profile.toConfigJson().toString(2))
 
+        // round9：每次建立新连接时重置流量缓存基线，避免上一次连接残留值被诊断包读到。
+        lastTrafficSent = -1L
+        lastTrafficReceived = -1L
+
         // 点 1（日志增强）：启动前记录关键连接参数，用于定位「仅 IPv4 仍无法连接」断点。
         // 只记非敏感字段（IP 栈/优选 IP/ECH 域名），token 绝不落日志（avoid 明文泄漏）。
         LogStore.append(
@@ -221,8 +225,9 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             process = null
             readyInfo = null
             token = ""
-            lastTrafficSent = -1L
-            lastTrafficReceived = -1L
+            // round9 修复：不再清空 lastTraffic 缓存——停止后导出诊断包也能读到
+            // 最后累计流量（东哥常关闭后导出，之前 stop 清空导致 traffic 恒 -1）。
+            // 下次 start 时 trafficMonitor 会以 -1 基线重新记，startBlocking 无需预清。
         } finally {
             stopInProgress.set(false)
         }
