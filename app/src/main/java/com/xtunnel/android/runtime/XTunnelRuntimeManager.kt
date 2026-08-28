@@ -29,6 +29,11 @@ class XTunnelRuntimeManager private constructor(context: Context) {
     @Volatile
     private var dataPathController: VpnDataPathController? = null
 
+    // 流量监控线程（三轮根因）：周期拉 /v1/stats，把字节增量记入 LogStore，
+    // 区分「数据面不转（恒 0）」vs「转了但服务端不回」。空转即停。
+    @Volatile
+    private var trafficMonitor: Thread? = null
+
     @Synchronized
     fun start(profile: XTunnelProfile, vpnService: VpnService? = null) {
         if (process?.isRunning() == true) {
@@ -157,9 +162,11 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             ),
         )
         LogStore.append(LogStore.Level.Info, "隧道就绪 pid=${ready.pid} 数据面=${dataPathResult.state.name}")
+        startTrafficMonitor(ready.controlUrl, bearer)
     }
 
     private fun stopBlocking() {
+        stopTrafficMonitor()
         dataPathController?.close()
         dataPathController = null
         val ready = readyInfo
@@ -187,6 +194,56 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         process = null
         readyInfo = null
         token = ""
+    }
+
+    // 流量监控：周期拉 /v1/stats，把字节增量记入 LogStore，空转即自动停止。
+    private fun startTrafficMonitor(controlUrl: String, bearer: String) {
+        stopTrafficMonitor()
+        trafficMonitor = Thread {
+            var lastSent = -1L
+            var lastRecv = -1L
+            var zeroRounds = 0
+            while (process?.isRunning() == true) {
+                runCatching {
+                    val body = request("GET", "$controlUrl/v1/stats", bearer)
+                    val obj = JSONObject(body)
+                    val traffic = obj.optJSONObject("traffic") ?: JSONObject()
+                    val sent = traffic.optLong("bytes_sent", 0L)
+                    val recv = traffic.optLong("bytes_received", 0L)
+                    if (lastSent < 0L) {
+                        LogStore.append(LogStore.Level.Info, "流量基线 bytes_sent=$sent bytes_received=$recv")
+                    } else {
+                        val ds = sent - lastSent
+                        val dr = recv - lastRecv
+                        if (ds > 0 || dr > 0) {
+                            zeroRounds = 0
+                            LogStore.append(LogStore.Level.Info, "流量 ↑$ds B ↓$dr B（累计 ↑$sent ↓$recv）")
+                        } else {
+                            zeroRounds++
+                        }
+                    }
+                    lastSent = sent
+                    lastRecv = recv
+                }.onFailure { e ->
+                    LogStore.append(LogStore.Level.Error, "流量监控失败: ${e.message ?: e.javaClass.simpleName}")
+                }
+                // 30 轮（约 10 分钟）无流量增量视为空闲，自动停止刷屏。
+                if (zeroRounds >= 30) {
+                    LogStore.append(LogStore.Level.Info, "流量监控空闲 10 分钟，自动停止")
+                    return@Thread
+                }
+                Thread.sleep(TRAFFIC_POLL_MILLIS)
+            }
+        }.apply {
+            name = "x-tunnel-traffic"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun stopTrafficMonitor() {
+        trafficMonitor?.let { runCatching { it.interrupt() } }
+        trafficMonitor = null
     }
 
     private fun waitForReady(file: File): ReadyInfo {
@@ -348,6 +405,7 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         private const val READY_TIMEOUT_MILLIS = 10_000L
         private const val CHANNELS_READY_TIMEOUT_MILLIS = 15_000L
         private const val HTTP_TIMEOUT_MILLIS = 2_000L
+        private const val TRAFFIC_POLL_MILLIS = 3_000L
         private const val MAX_LOG_LINES = 200
         private const val MAX_DETAIL_CHARS = 160
 
