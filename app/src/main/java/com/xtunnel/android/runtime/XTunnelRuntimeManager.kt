@@ -34,6 +34,13 @@ class XTunnelRuntimeManager private constructor(context: Context) {
     @Volatile
     private var trafficMonitor: Thread? = null
 
+    // 流量累计值缓存（八轮修复·traffic字段-1）：trafficMonitor 每次轮询更新，
+    // collectDiagnostics 优先读此缓存，避免导出时机与 /v1/stats 时序不一致导致 -1。
+    @Volatile
+    private var lastTrafficSent: Long = -1L
+    @Volatile
+    private var lastTrafficReceived: Long = -1L
+
     @Synchronized
     fun start(profile: XTunnelProfile, vpnService: VpnService? = null) {
         if (process?.isRunning() == true) {
@@ -194,6 +201,8 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         process = null
         readyInfo = null
         token = ""
+        lastTrafficSent = -1L
+        lastTrafficReceived = -1L
     }
 
     // 流量监控：周期拉 /v1/stats，把字节增量记入 LogStore，空转即自动停止。
@@ -210,6 +219,8 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                     val traffic = obj.optJSONObject("traffic") ?: JSONObject()
                     val sent = traffic.optLong("bytes_sent", 0L)
                     val recv = traffic.optLong("bytes_received", 0L)
+                    lastTrafficSent = sent
+                    lastTrafficReceived = recv
                     if (lastSent < 0L) {
                         LogStore.append(LogStore.Level.Info, "流量基线 bytes_sent=$sent bytes_received=$recv")
                     } else {
@@ -316,6 +327,10 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         }
         val trafficObj = runCatching { trafficText?.let { JSONObject(it) } }.getOrNull()
         val statusObj = runCatching { statusText?.let { JSONObject(it) } }.getOrNull()
+        // 八轮修复·traffic字段-1：优先用 trafficMonitor 缓存的实时累计值，
+        // 其次回退到本次 /v1/stats 拉取结果，避免两者都拿不到时报 -1。
+        val cachedSent = lastTrafficSent
+        val cachedRecv = lastTrafficReceived
         return JSONObject().apply {
             put("collected_at", System.currentTimeMillis())
             put("process_running", process?.isRunning() == true)
@@ -323,8 +338,10 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             put("runtime_state", RuntimeStateStore.snapshot().state.name)
             // 流量（区分断点：↑恒0=数据面不转；↑>0↓=0=服务端不回）
             val t = trafficObj?.optJSONObject("traffic")
-            put("traffic_bytes_sent", t?.optLong("bytes_sent", -1L) ?: -1L)
-            put("traffic_bytes_received", t?.optLong("bytes_received", -1L) ?: -1L)
+            val statsSent = t?.optLong("bytes_sent", -1L) ?: -1L
+            val statsRecv = t?.optLong("bytes_received", -1L) ?: -1L
+            put("traffic_bytes_sent", if (cachedSent >= 0L) cachedSent else statsSent)
+            put("traffic_bytes_received", if (cachedRecv >= 0L) cachedRecv else statsRecv)
             val counters = trafficObj?.optJSONObject("counters")
             put("client_reconnects_total", counters?.optLong("client_reconnects_total", -1L) ?: -1L)
             // 连接状态（channels up/down）

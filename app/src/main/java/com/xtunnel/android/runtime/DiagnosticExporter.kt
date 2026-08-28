@@ -17,10 +17,10 @@ import java.util.zip.ZipOutputStream
  * 一键打包关键数据为 zip，供东哥导出后转发老马分析，区分「客户端数据面不转」vs「服务端不回」。
  *
  * 打包内容（token 一律脱敏）：
- *  - traffic.json  流量统计（bytes_sent/received 累计）、client_reconnects 计数
- *  - status.json   连接状态（channels up/down/rtt）、runtime_state、pid
- *  - logs.txt      应用内 LogStore 最近日志
- *  - info.txt      基础信息（Android 版本/网络类型/App 版本）
+ *  - diagnostics.json  流量统计（bytes_sent/received 累计）、client_reconnects 计数、channels
+ *  - logs.txt          应用内 LogStore 最近日志
+ *  - crash-logcat.txt  崩溃日志（AndroidRuntime FATAL EXCEPTION 段 + 最近错误行）
+ *  - info.txt          基础信息（Android 版本/网络类型/App 版本/commit）
  */
 object DiagnosticExporter {
 
@@ -43,6 +43,12 @@ object DiagnosticExporter {
             zos.write(logLines.toByteArray(Charsets.UTF_8))
             zos.closeEntry()
 
+            // 2b. 崩溃日志（八轮修复：收集 FATAL EXCEPTION 段 + 最近错误行）
+            val crashLines = collectCrashLogcat()
+            zos.putNextEntry(ZipEntry("crash-logcat.txt"))
+            zos.write(crashLines.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+
             // 3. 基础信息
             val info = buildString {
                 appendLine("collected_at: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())}")
@@ -52,6 +58,7 @@ object DiagnosticExporter {
                 appendLine("model: ${Build.MODEL}")
                 appendLine("network_type: " + networkType(context))
                 appendLine("theme_mode: ${ThemePrefs.load(context).name}")
+                appendLine("app_version: " + appVersion(context))
             }
             zos.putNextEntry(ZipEntry("info.txt"))
             zos.write(info.toByteArray(Charsets.UTF_8))
@@ -64,6 +71,37 @@ object DiagnosticExporter {
             context.packageName + ".fileprovider",
             zipFile,
         )
+    }
+
+    // 八轮修复·诊断包收崩溃日志：dump logcat 本应用进程的 crash 段。
+    // minSdk 23 无 READ_LOGS 权限时只能抓到自身 UID 的 logcat（Android 4.1+ 允许读自身进程日志）。
+    private fun collectCrashLogcat(): String {
+        return try {
+            val pid = android.os.Process.myPid()
+            val process = ProcessBuilder(
+                "logcat", "-d", "-v", "threadtime",
+                "--pid=$pid",
+                "AndroidRuntime:E", "libc:F", "DEBUG:F", "*:S",
+            ).redirectErrorStream(true).start()
+            val out = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor()
+            // 截取最近 200 行，避免 zip 过大
+            val lines = out.lineSequence().toList()
+            val recent = lines.takeLast(200)
+            if (recent.isEmpty()) "（无本进程崩溃日志）" else recent.joinToString("\n")
+        } catch (e: Exception) {
+            "无法收集 logcat: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    private fun appVersion(context: Context): String {
+        return try {
+            val pm = context.packageManager
+            val info = pm.getPackageInfo(context.packageName, 0)
+            info.versionName + " (code ${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode})"
+        } catch (e: Exception) {
+            "unknown"
+        }
     }
 
     private fun networkType(context: Context): String {

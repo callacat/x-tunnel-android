@@ -383,6 +383,12 @@ private fun ThemeCard(current: ThemeMode, onThemeChange: (ThemeMode) -> Unit) {
 
 @Composable
 private fun RuntimeCard(snapshot: RuntimeSnapshot) {
+    val context = LocalContext.current
+    val versionName = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "unknown"
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -395,6 +401,8 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(modifier = Modifier.height(8.dp))
+            // 八轮修复·版本号显示（round5 生效）：东哥可确认装的哪一版
+            Text(text = "版本：$versionName")
             Text(text = "Android API：${Build.VERSION.SDK_INT}")
             if (snapshot.controlUrl.isNotBlank()) {
                 Text(text = "控制端口：${snapshot.controlUrl}")

@@ -9,15 +9,20 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.VpnService
 import android.os.Build
 import com.xtunnel.android.MainActivity
 import com.xtunnel.android.R
 import com.xtunnel.android.model.DefaultProfile
 import com.xtunnel.android.model.XTunnelProfile
+import com.xtunnel.android.runtime.LogStore
 import com.xtunnel.android.runtime.XTunnelRuntimeManager
 
 class XTunnelVpnService : VpnService() {
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
@@ -30,6 +35,7 @@ class XTunnelVpnService : VpnService() {
             }
             else -> {
                 startForegroundService()
+                registerNetworkCallback()
                 XTunnelRuntimeManager.get(this).start(intent.profileOrDefault(), this)
             }
         }
@@ -42,8 +48,58 @@ class XTunnelVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        unregisterNetworkCallback()
         XTunnelRuntimeManager.get(this).stop()
         super.onDestroy()
+    }
+
+    // 八轮修复·网络切换监听：飞行模式开关 = 蜂窝网络重连（IPv4/IPv6 路由变化）。
+    // 将「网络丢失/恢复」事件记入 LogStore → 诊断包可见，辅助定位「切换后无法访问外网」。
+    // 不盲目 stop+start 打断连接（根因已在服务端 DNS 回包侧），先记录事件供分析。
+    private fun registerNetworkCallback() {
+        unregisterNetworkCallback()
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                LogStore.append(LogStore.Level.Info, "网络可用: ${describeNetwork(cm, network)}")
+            }
+            override fun onLost(network: Network) {
+                LogStore.append(LogStore.Level.Info, "网络丢失（可能飞行模式切换）: ${describeNetwork(cm, network)}")
+            }
+            override fun onCapabilitiesChanged(network: Network, caps: android.net.NetworkCapabilities) {
+                LogStore.append(LogStore.Level.Info, "网络能力变化: ${describeNetwork(cm, network)}")
+            }
+        }.also { cb ->
+            // 用默认网络回调（API 24+），飞行模式切换时 onAvailable/onLost 都会触发；
+            // API 23 降级为 activeNetwork 单网络回调。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                cm.registerDefaultNetworkCallback(cb)
+            } else {
+                cm.activeNetwork?.let { cm.registerNetworkCallback(it, cb) }
+            }
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        networkCallback?.let { cb ->
+            runCatching {
+                val cm = getSystemService(ConnectivityManager::class.java)
+                cm?.unregisterNetworkCallback(cb)
+            }
+        }
+        networkCallback = null
+    }
+
+    private fun describeNetwork(cm: ConnectivityManager, network: Network): String {
+        val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull()
+        val transport = when {
+            caps == null -> "unknown"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+            else -> "other"
+        }
+        return "$transport"
     }
 
     private fun startForegroundService() {
@@ -153,7 +209,10 @@ class XTunnelVpnService : VpnService() {
         }
 
         fun stop(context: Context) {
-            context.startService(Intent(context, XTunnelVpnService::class.java).setAction(ACTION_STOP))
+            // 六轮修复：App 内点「停止」按钮从 Activity context 出发，若 App 在后台
+            // （VPN 运行中切走/权限弹窗切后台）调 startService 会抛 IllegalStateException
+            // → 闪退。改 stopService（不区分前后台，触发 onDestroy → RuntimeManager.stop）。
+            context.stopService(Intent(context, XTunnelVpnService::class.java))
         }
 
         private fun Intent?.profileOrDefault(): XTunnelProfile {
