@@ -62,13 +62,9 @@ class VpnDataPathController(private val service: VpnService) {
             // libhev-socks5-tunnel / libxtunnel 子进程，同 UID）直连物理网。
             // 壳与 sidecar 不在白名单 → 隧道出站流量天然绕过 TUN，不环路，无需 protect。
             // VpnService 语义：只要调用过一次 addAllowedApplication 即进入白名单模式；
-            // 若列表为空会退回全局代理（语义反转），故这里硬性要求至少一条。
-            if (profile.allowedApps.isEmpty()) {
-                return VpnDataPathResult(
-                    state = VpnDataPathState.Failed,
-                    detail = "分应用代理已开启但未勾选任何应用",
-                )
-            }
+            // 若列表为空会退回全局代理（语义反转），故这里硬性要求至少一条（抛异常，
+            // 外层 start() 的 runCatching 会捕获并转成 Failed 结果，不建立隧道）。
+            require(profile.allowedApps.isNotEmpty()) { "分应用代理已开启但未勾选任何应用" }
             // addAllowedApplication 对未安装/不可查包名抛 NameNotFoundException，逐包跳过。
             profile.allowedApps.forEach { pkg ->
                 try {
