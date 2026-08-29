@@ -3,6 +3,7 @@ package com.xtunnel.android.runtime
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import com.xtunnel.android.model.PerAppConfigStore
 import com.xtunnel.android.model.XTunnelProfile
 import hev.htproxy.TProxyService
 import java.io.File
@@ -57,28 +58,43 @@ class VpnDataPathController(private val service: VpnService) {
             .addRoute("0.0.0.0", 0)
             .addDnsServer(DEFAULT_DNS)
 
-        if (profile.perAppEnabled) {
-            // 分应用代理·白名单模式：仅白名单内的应用走隧道，其余（含壳自身与
-            // libhev-socks5-tunnel / libxtunnel 子进程，同 UID）直连物理网。
-            // 壳与 sidecar 不在白名单 → 隧道出站流量天然绕过 TUN，不环路，无需 protect。
-            // VpnService 语义：只要调用过一次 addAllowedApplication 即进入白名单模式；
-            // 若列表为空会退回全局代理（语义反转），故这里硬性要求至少一条（抛异常，
-            // 外层 start() 的 runCatching 会捕获并转成 Failed 结果，不建立隧道）。
-            require(profile.allowedApps.isNotEmpty()) { "分应用代理已开启但未勾选任何应用" }
-            // addAllowedApplication 对未安装/不可查包名抛 NameNotFoundException，逐包跳过。
-            profile.allowedApps.forEach { pkg ->
-                try {
-                    builder.addAllowedApplication(pkg)
-                } catch (_: PackageManager.NameNotFoundException) {
-                    // 未安装的应用跳过。
+        // 分应用代理·三模式（定稿方案 v2 §2.1）：off/allow/disallow。
+        // x-tunnel 例外：自身在 VPN 外（sidecar 拨号走物理网络），故
+        // allow 白名单必须剔除自身防自环（勿照抄 warp-go 的 add(self)）。
+        val perApp = PerAppConfigStore.loadFiltered(service)
+        when (perApp.mode) {
+            PerAppConfigStore.Mode.Allow -> {
+                // 白名单：仅勾选应用走隧道，其余（含壳自身与 native 子进程）直连。
+                // VpnService 语义：调用过至少一次 addAllowedApplication 即进入白名单；
+                // 空名单会退回全局代理（语义反转），硬性要求至少一条。
+                require(perApp.packages.isNotEmpty()) { "分应用代理白名单为空，请至少勾选一个应用" }
+                perApp.packages.forEach { pkg ->
+                    try {
+                        builder.addAllowedApplication(pkg)
+                    } catch (_: PackageManager.NameNotFoundException) {
+                        // 失效包名跳过（loadFiltered 已过滤，此处防御性兜底）。
+                    }
                 }
             }
-        } else {
-            // 全局代理模式：所有应用走隧道，仅排除壳自身，避免自环。
-            try {
-                builder.addDisallowedApplication(service.packageName)
-            } catch (_: PackageManager.NameNotFoundException) {
-                // The current package should exist; keep setup resilient for unusual test contexts.
+            PerAppConfigStore.Mode.Disallow -> {
+                // 黑名单：勾选应用直连，其余走隧道。必须包含壳自身（现状行为），
+                // 否则壳/子进程流量会进 TUN 自环。
+                val disallowed = perApp.packages + service.packageName
+                disallowed.forEach { pkg ->
+                    try {
+                        builder.addDisallowedApplication(pkg)
+                    } catch (_: PackageManager.NameNotFoundException) {
+                        // 失效包名跳过。
+                    }
+                }
+            }
+            PerAppConfigStore.Mode.Off -> {
+                // 全局代理（默认）：所有应用走隧道，仅排除壳自身避免自环（现状）。
+                try {
+                    builder.addDisallowedApplication(service.packageName)
+                } catch (_: PackageManager.NameNotFoundException) {
+                    // The current package should exist; keep setup resilient.
+                }
             }
         }
 

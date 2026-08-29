@@ -69,6 +69,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.Alignment
 import com.xtunnel.android.model.DefaultProfile
 import com.xtunnel.android.model.InstalledApps
+import com.xtunnel.android.model.PerAppConfigStore
 import com.xtunnel.android.model.ThemeMode
 import com.xtunnel.android.model.ThemePrefs
 import com.xtunnel.android.model.ProfileStore
@@ -349,13 +350,15 @@ private fun ProfileSummaryCard(
     }
 }
 
-// 分应用代理·Dashboard 入口卡片：展示当前配置的白名单状态与勾选数量。
+// 分应用代理·Dashboard 入口卡片：展示当前模式与勾选数。
 @Composable
 private fun PerAppCard(
     profile: XTunnelProfile?,
     locked: Boolean,
     onOpenPerApp: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val config = remember { PerAppConfigStore.load(context) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -373,12 +376,7 @@ private fun PerAppCard(
             if (profile == null) {
                 Text("请先在「配置」页添加并选择一个服务器配置")
             } else {
-                val count = profile.allowedApps.size
-                if (profile.perAppEnabled) {
-                    Text("白名单模式：已勾选 $count 个应用走隧道，其余应用直连")
-                } else {
-                    Text("已关闭：所有应用走隧道（全局代理）")
-                }
+                Text(PerAppConfigStore.describe(config))
                 if (locked) {
                     Text("运行中已锁定，停止后可调整；修改后需重启连接生效", style = MaterialTheme.typography.bodySmall)
                 }
@@ -390,22 +388,20 @@ private fun PerAppCard(
     }
 }
 
-// 分应用代理·设置页：开关 + 已安装应用列表（图标+名称+包名，勾选=走隧道）。
-// 白名单模式：勾选应用走隧道、未勾选直连；壳自身不在候选列表（避免误勾导致隧道流量自环）。
+// 分应用代理·设置页：三模式选择（off/allow/disallow）+ 应用列表勾选。
+// allow=勾选走隧道；disallow=勾选直连；off=全部走隧道（默认）。壳自身从候选剔除（防自环）。
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PerAppScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    var profile by remember { mutableStateOf(ProfileStore.loadActive(context)) }
-    var enabled by remember { mutableStateOf(profile?.perAppEnabled ?: false) }
-    var allowed by remember { mutableStateOf(profile?.allowedApps ?: emptySet()) }
+    var config by remember { mutableStateOf(PerAppConfigStore.loadFiltered(context)) }
     val selfPackage = remember { context.packageName }
     val apps = remember {
         InstalledApps.scan(context, excludes = setOf(selfPackage))
     }
     val running = remember { mutableStateOf(false) }
 
-    // 页面可见期间刷新运行态，避免切换配置/连接后状态陈旧。
+    // 页面可见期间刷新运行态。
     LaunchedEffect(Unit) {
         while (true) {
             running.value = RuntimeStateStore.snapshot().state == RuntimeState.Ready
@@ -424,7 +420,6 @@ private fun PerAppScreen(onBack: () -> Unit) {
             )
         },
     ) { contentPadding ->
-        val current = profile
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -432,98 +427,107 @@ private fun PerAppScreen(onBack: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (current == null) {
-                Text("尚未选择服务器配置，请先到「配置」页添加", color = MaterialTheme.colorScheme.error)
-            } else {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column {
-                                Text(
-                                    "分应用代理（白名单）",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text(
-                                    "开启后仅下方勾选的应用走隧道，其余直连",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            }
-                            Switch(checked = enabled, onCheckedChange = { enabled = it })
-                        }
-                        if (running.value) {
-                            Text(
-                                "隧道运行中已锁定；修改需停止后生效，或先停止再改",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                        Text(
-                            "已选 ${allowed.size} 个应用",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-
-                if (enabled) {
+            // 模式选择（三档）
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "勾选走隧道 / 取消勾选直连的应用",
+                        "分应用模式",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    if (apps.isEmpty()) {
-                        Text("未找到可代理的第三方应用（需已安装且有启动入口与联网权限）")
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.weight(1f, fill = true),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                    PerAppConfigStore.Mode.entries.forEach { mode ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { config = config.copy(mode = mode) }
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            items(apps, key = { it.packageName }) { app ->
-                                AppRow(
-                                    label = app.label,
-                                    packageName = app.packageName,
-                                    icon = app.icon(context),
-                                    checked = app.packageName in allowed,
-                                    onToggle = { checked ->
-                                        allowed = if (checked) allowed + app.packageName
-                                        else allowed - app.packageName
-                                    },
-                                )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(modeLabel(mode), fontWeight = FontWeight.Medium)
+                                Text(modeHint(mode), style = MaterialTheme.typography.bodySmall)
                             }
+                            Switch(
+                                checked = config.mode == mode,
+                                onCheckedChange = { if (it) config = config.copy(mode = mode) },
+                            )
+                        }
+                    }
+                    if (running.value) {
+                        Text(
+                            "隧道运行中已锁定；修改需停止后生效，或先停止再改",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Text(
+                        "已选 ${config.packages.size} 个应用",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+
+            // 应用列表（allow/disallow 模式才展示勾选）
+            if (config.mode != PerAppConfigStore.Mode.Off) {
+                Text(
+                    if (config.mode == PerAppConfigStore.Mode.Allow) "勾选走隧道 / 取消勾选直连的应用"
+                    else "勾选直连 / 取消勾选走隧道的应用",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (apps.isEmpty()) {
+                    Text("未找到可代理的第三方应用（需已安装且有启动入口与联网权限）")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f, fill = true),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        items(apps, key = { it.packageName }) { app ->
+                            AppRow(
+                                label = app.label,
+                                packageName = app.packageName,
+                                icon = app.icon(context),
+                                checked = app.packageName in config.packages,
+                                onToggle = { checked ->
+                                    val pkgs = if (checked) config.packages + app.packageName
+                                    else config.packages - app.packageName
+                                    config = config.copy(packages = pkgs)
+                                },
+                            )
                         }
                     }
                 }
+            }
 
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !running.value,
-                    onClick = {
-                        val updated = current.copy(
-                            perAppEnabled = enabled,
-                            allowedApps = allowed,
-                        )
-                        ProfileStore.saveProfiles(
-                            context,
-                            ProfileStore.loadProfiles(context).map { if (it.name == current.name) updated else it },
-                            current.name,
-                        )
-                        profile = updated
-                        android.widget.Toast.makeText(context, "已保存，重启连接后生效", android.widget.Toast.LENGTH_SHORT).show()
-                    },
-                ) {
-                    Text("保存并生效")
-                }
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !running.value && (config.mode == PerAppConfigStore.Mode.Off || config.packages.isNotEmpty()),
+                onClick = {
+                    PerAppConfigStore.save(context, config)
+                    android.widget.Toast.makeText(context, "已保存，重启连接后生效", android.widget.Toast.LENGTH_SHORT).show()
+                },
+            ) {
+                Text("保存并生效")
             }
         }
     }
+}
+
+private fun modeLabel(mode: PerAppConfigStore.Mode): String = when (mode) {
+    PerAppConfigStore.Mode.Off -> "全部应用（默认）"
+    PerAppConfigStore.Mode.Allow -> "白名单"
+    PerAppConfigStore.Mode.Disallow -> "黑名单"
+}
+
+private fun modeHint(mode: PerAppConfigStore.Mode): String = when (mode) {
+    PerAppConfigStore.Mode.Off -> "所有应用走隧道，与现状一致"
+    PerAppConfigStore.Mode.Allow -> "勾选的应用走隧道，其余直连"
+    PerAppConfigStore.Mode.Disallow -> "勾选的应用直连，其余走隧道"
 }
 
 // 单个应用行：图标 + 名称 + 包名 + 勾选框。

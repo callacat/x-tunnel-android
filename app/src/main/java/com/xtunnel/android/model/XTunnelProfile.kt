@@ -20,10 +20,6 @@ data class XTunnelProfile(
     val dialIPs: String = "",
     val ipStrategy: String = "4,6",
     val dnsCacheTtl: String = "5m",
-    // 分应用代理（白名单模式）：perAppEnabled 开启后，仅 allowedApps 内的包走隧道，其余直连。
-    // allowedApps 存包名集合；壳自身与 native 子进程不在白名单内 → 天然直连物理网，隧道流量不环路。
-    val perAppEnabled: Boolean = false,
-    val allowedApps: Set<String> = emptySet(),
 )
 
 object DefaultProfile {
@@ -57,11 +53,6 @@ fun XTunnelProfile.validationError(): String? {
     if (token.isBlank()) return "Token 不能为空"
     if (connections !in 1..16) return "连接数须在 1 到 16 之间"
     if (blockPorts.isBlank()) return "UDP 阻断端口不能为空"
-
-    // 分应用代理白名单：开启后至少要勾选一个应用，否则会退回全局代理（语义反转）。
-    if (perAppEnabled && allowedApps.isEmpty()) {
-        return "分应用代理已开启，但未勾选任何应用；请至少勾选一个，或关闭分应用代理"
-    }
 
     if (serverUrl.isBlank()) return "服务器地址不能为空"
 
