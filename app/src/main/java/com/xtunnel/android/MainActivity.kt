@@ -70,6 +70,7 @@ import androidx.compose.ui.Alignment
 import com.xtunnel.android.model.DefaultProfile
 import com.xtunnel.android.model.InstalledApps
 import com.xtunnel.android.model.PerAppConfigStore
+import com.xtunnel.android.model.RouteConfigStore
 import com.xtunnel.android.model.ThemeMode
 import com.xtunnel.android.model.ThemePrefs
 import com.xtunnel.android.model.ProfileStore
@@ -250,6 +251,7 @@ private fun DashboardScreen(
                 locked = running,
                 onOpenPerApp = onOpenPerApp,
             )
+            RouteCard(locked = running)
             ActionRow(
                 busy = busy,
                 running = running,
@@ -383,6 +385,52 @@ private fun PerAppCard(
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onOpenPerApp) { Text("设置分应用") }
+            }
+        }
+    }
+}
+
+// GEO 分流·Dashboard 开关卡片（定稿方案 v2 §2.3）：全局代理 / GEO 分流。
+// GEO 分流 = sidecar route 引擎启用（默认规则：广告拦截+国内直连+境外走隧道）。
+@Composable
+private fun RouteCard(locked: Boolean) {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(RouteConfigStore.load(context).enabled) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "GEO 分流",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        if (enabled) "已开启：境内直连、境外走隧道、广告拦截"
+                        else "已关闭：全局代理（所有流量走隧道）",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Switch(
+                    checked = enabled,
+                    enabled = !locked,
+                    onCheckedChange = { v ->
+                        enabled = v
+                        RouteConfigStore.save(context, RouteConfigStore.Config(enabled = v))
+                        android.widget.Toast.makeText(context, "已保存，重启连接后生效", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                )
+            }
+            if (locked) {
+                Text("运行中已锁定，停止后可调整", style = MaterialTheme.typography.bodySmall)
             }
         }
     }

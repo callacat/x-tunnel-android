@@ -3,6 +3,8 @@ package com.xtunnel.android.runtime
 import android.content.Context
 import android.os.Build
 import android.net.VpnService
+import com.xtunnel.android.model.PerAppConfigStore
+import com.xtunnel.android.model.RouteConfigStore
 import com.xtunnel.android.model.XTunnelProfile
 import org.json.JSONObject
 import java.io.File
@@ -358,12 +360,16 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         val bearer = token
         var trafficText: String? = null
         var statusText: String? = null
+        var routeStatsText: String? = null
         if (ready != null && bearer.isNotBlank()) {
             trafficText = runCatching { request("GET", "${ready.controlUrl}/v1/stats", bearer) }.getOrNull()
             statusText = runCatching { request("GET", "${ready.controlUrl}/v1/status", bearer) }.getOrNull()
+            // §2.3：分流统计（route 引擎启用时才有数据；引擎未启用返回 enabled=false）
+            routeStatsText = runCatching { request("GET", "${ready.controlUrl}/v1/route/stats", bearer) }.getOrNull()
         }
         val trafficObj = runCatching { trafficText?.let { JSONObject(it) } }.getOrNull()
         val statusObj = runCatching { statusText?.let { JSONObject(it) } }.getOrNull()
+        val routeStatsObj = runCatching { routeStatsText?.let { JSONObject(it) } }.getOrNull()
         // 八轮修复·traffic字段-1：优先用 trafficMonitor 缓存的实时累计值，
         // 其次回退到本次 /v1/stats 拉取结果，避免两者都拿不到时报 -1。
         val cachedSent = lastTrafficSent
@@ -393,6 +399,18 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                 })
             }
             put("channels", chArray)
+            // §2.3：分流统计 + GEO 库状态（route 引擎未启用时 enabled=false）
+            val routeEnabled = routeStatsObj?.optBoolean("enabled", false) ?: false
+            put("route_enabled", routeEnabled)
+            val rs = routeStatsObj?.optJSONObject("stats")
+            put("route_stats", org.json.JSONObject().apply {
+                put("proxy", rs?.optLong("proxy", -1L) ?: -1L)
+                put("direct", rs?.optLong("direct", -1L) ?: -1L)
+                put("rejected", rs?.optLong("rejected", -1L) ?: -1L)
+                put("miss", rs?.optLong("miss", -1L) ?: -1L)
+            })
+            // 分应用代理当前模式（诊断可见性，辅助排查名单生效问题）
+            put("per_app_mode", PerAppConfigStore.load(appContext).mode.raw)
         }.toString(2)
     }
 
@@ -473,6 +491,9 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             .apply { if (dialIPs.isNotBlank()) put("ip", dialIPs) }
             .apply { if (ipStrategy.isNotBlank()) put("ips", ipStrategy) }
             .apply { if (dnsCacheTtl.isNotBlank()) put("dns_cache_ttl", dnsCacheTtl) }
+            // GEO 分流（§2.3）：全局开关 on 时启用 sidecar route 引擎。
+            // rules_path/geo_dir 留空 → sidecar 用默认模板 + 自动下载 GEO 库。
+            .put("route_enabled", RouteConfigStore.load(appContext).enabled)
             .put("dial_timeout", "5s")
             .put("ws_handshake_timeout", "5s")
             .put("reconnect_delay", "1s")
