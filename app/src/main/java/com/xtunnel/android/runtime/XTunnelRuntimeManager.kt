@@ -371,6 +371,19 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         }.getOrDefault(false)
     }
 
+    // round40：手动触发 GEO 数据库更新（POST /v1/route/geo/update）。
+    // sidecar 异步下载（走隧道代理），完成后热加载；结果经 routeStatus().siteLoaded
+    // /ipLoaded 轮询可见。sidecar 未就绪返回 false。
+    fun updateGeo(): Boolean {
+        val ready = readyInfo
+        val bearer = token
+        if (ready == null || bearer.isBlank()) return false
+        return runCatching {
+            request("POST", "${ready.controlUrl}/v1/route/geo/update", bearer)
+            true
+        }.getOrDefault(false)
+    }
+
     // round9（GEO 自定义规则）：用户配置了自定义规则时，把「默认规则 + 自定义规则」
     // 合并写入 runtimeDir/rules.txt。无自定义规则时删掉旧文件（避免残留上次规则），
     // 让 core 走默认模板 + 自动下载。失败静默——启动不因规则文件写失败而中断。
@@ -445,9 +458,59 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                 put("rejected", rs?.optLong("rejected", -1L) ?: -1L)
                 put("miss", rs?.optLong("miss", -1L) ?: -1L)
             })
+            // round40：GEO 库加载状态（geosite/geoip 是否就绪、类别数、规则条数）——
+            // 「GEO 数据是否下载到本地并应用上」的直接证据。
+            val geo = routeStatsObj?.optJSONObject("geo")
+            put("route_geo", org.json.JSONObject().apply {
+                put("site_loaded", geo?.optBoolean("site_loaded", false) ?: false)
+                put("site_categories", geo?.optInt("site_categories", 0) ?: 0)
+                put("ip_loaded", geo?.optBoolean("ip_loaded", false) ?: false)
+                put("ip_categories", geo?.optInt("ip_categories", 0) ?: 0)
+                put("ip_prefixes", geo?.optInt("ip_prefixes", 0) ?: 0)
+                put("rule_count", geo?.optInt("rule_count", 0) ?: 0)
+                put("fallback", geo?.optString("fallback", "") ?: "")
+            })
             // 分应用代理当前模式（诊断可见性，辅助排查名单生效问题）
             put("per_app_mode", PerAppConfigStore.load(appContext).mode.raw)
         }.toString(2)
+    }
+
+    // round40：GEO 运行状态快照（RouteCard 状态行展示用）。sidecar 未运行返回 null。
+    // 数据源 /v1/route/stats 的 {enabled, stats, geo} 三段，供 UI 轮询展示
+    // 「GEO 库是否就绪 / 规则条数 / proxy-direct 命中计数」。
+    data class RouteStatus(
+        val enabled: Boolean,
+        val proxyHits: Long,
+        val directHits: Long,
+        val rejectedHits: Long,
+        val missHits: Long,
+        val siteLoaded: Boolean,
+        val ipLoaded: Boolean,
+        val ruleCount: Int,
+        val fallback: String,
+    )
+
+    fun routeStatus(): RouteStatus? {
+        val ready = readyInfo
+        val bearer = token
+        if (ready == null || bearer.isBlank()) return null
+        val body = runCatching { request("GET", "${ready.controlUrl}/v1/route/stats", bearer) }.getOrNull() ?: return null
+        return runCatching {
+            val obj = JSONObject(body)
+            val stats = obj.optJSONObject("stats") ?: JSONObject()
+            val geo = obj.optJSONObject("geo") ?: JSONObject()
+            RouteStatus(
+                enabled = obj.optBoolean("enabled", false),
+                proxyHits = stats.optLong("proxy", 0L),
+                directHits = stats.optLong("direct", 0L),
+                rejectedHits = stats.optLong("rejected", 0L),
+                missHits = stats.optLong("miss", 0L),
+                siteLoaded = geo.optBoolean("site_loaded", false),
+                ipLoaded = geo.optBoolean("ip_loaded", false),
+                ruleCount = geo.optInt("rule_count", 0),
+                fallback = geo.optString("fallback", ""),
+            )
+        }.getOrNull()
     }
 
     private fun request(method: String, target: String, bearer: String): String {

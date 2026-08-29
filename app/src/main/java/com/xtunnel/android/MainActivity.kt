@@ -401,6 +401,15 @@ private fun RouteCard(locked: Boolean) {
     var showRulesEditor by remember { mutableStateOf(false) }
     var showSourceUrlEditor by remember { mutableStateOf(false) }
     val enabled = config.enabled
+    // round40：GEO 运行状态（sidecar 运行时轮询 /v1/route/stats）——
+    // 「GEO 库是否下载到本地并应用上」的直接可视化，替代黑盒。
+    var routeStatus by remember { mutableStateOf<XTunnelRuntimeManager.RouteStatus?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            routeStatus = XTunnelRuntimeManager.get(context).routeStatus()
+            delay(2_000)
+        }
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -433,6 +442,42 @@ private fun RouteCard(locked: Boolean) {
                         android.widget.Toast.makeText(context, "已保存，重启连接后生效", android.widget.Toast.LENGTH_SHORT).show()
                     },
                 )
+            }
+
+            // round40：GEO 运行状态行（sidecar 就绪后展示「GEO 库/规则/命中计数」）
+            val status = routeStatus
+            if (status != null) {
+                val geoReady = status.siteLoaded && status.ipLoaded
+                Text(
+                    buildString {
+                        append("运行状态：")
+                        if (!status.enabled) {
+                            append("分流引擎未启用")
+                        } else {
+                            append("规则 ${status.ruleCount} 条 · ")
+                            append("GEO 库 ")
+                            append(
+                                when {
+                                    geoReady -> "已就绪"
+                                    status.siteLoaded || status.ipLoaded -> "部分加载"
+                                    else -> "未加载（下载中或失败，见日志）"
+                                },
+                            )
+                            if (status.fallback.isNotBlank()) append(" · 兜底 ${status.fallback}")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (status.enabled && geoReady) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (status.enabled) {
+                    Text(
+                        "命中统计：proxy ${status.proxyHits} · direct ${status.directHits}" +
+                            " · reject ${status.rejectedHits} · miss ${status.missHits}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             if (enabled) {
@@ -521,27 +566,31 @@ private fun RouteCard(locked: Boolean) {
                         }
                     }
                 } else {
-                    // 手动更新：调 sidecar control API /v1/rules/reload（运行时生效）。
-                    // 隧道未运行时提示先启动；失败静默（sidecar 未就绪时手动更新自然无效）。
+                    // 手动更新：规则文件重载 + GEO 库下载更新一步触发（round40）。
+                    // 隧道未运行时提示先启动；结果经 RouteCard 状态行轮询可见。
                     OutlinedButton(
                         onClick = {
                             val snapshot = RuntimeStateStore.snapshot()
                             if (snapshot.state != RuntimeState.Ready) {
                                 android.widget.Toast.makeText(context, "隧道未运行，请先启动连接", android.widget.Toast.LENGTH_SHORT).show()
                             } else {
-                                val ok = runCatching {
-                                    XTunnelRuntimeManager.get(context).reloadRules()
-                                }.getOrDefault(false)
+                                val runtime = XTunnelRuntimeManager.get(context)
+                                val rulesOk = runCatching { runtime.reloadRules() }.getOrDefault(false)
+                                val geoOk = runCatching { runtime.updateGeo() }.getOrDefault(false)
                                 android.widget.Toast.makeText(
                                     context,
-                                    if (ok) "规则已重新加载" else "重新加载失败，请查看日志",
+                                    when {
+                                        rulesOk && geoOk -> "已触发更新：GEO 库下载中，稍候看运行状态"
+                                        rulesOk -> "规则已重载；GEO 更新触发失败"
+                                        else -> "更新触发失败，请查看日志"
+                                    },
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             }
                         },
                         enabled = !locked,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("立即更新规则") }
+                    ) { Text("立即更新规则/GEO 库") }
                 }
             }
 
