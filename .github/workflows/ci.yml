@@ -52,6 +52,20 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      # 版本号自动递增（东哥 2026-08-29 拍板）：round N = git 提交总数
+      # （git rev-list --count HEAD），每 push 一次代码 N 自动 +1，无需人工改。
+      # 三处（versionName / APK 文件名 / 首页显示）同一来源：versionName 由 env 注入，
+      # 首页显示动态读 versionName，APK 文件名在 artifact 上传时带 versionName。
+      - name: Compute version
+        id: version
+        run: |
+          count=$(git rev-list --count HEAD)
+          name="0.1.0-round${count}"
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "XTUNNEL_ANDROID_VERSION_NAME=${name}" >> "$GITHUB_ENV"
+          echo "XTUNNEL_ANDROID_VERSION_CODE=${count}" >> "$GITHUB_ENV"
+
       - name: Build hev-socks5-tunnel arm64
         run: bash ./scripts/build-hev-android.sh
 
@@ -70,13 +84,13 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
-          name: x-tunnel-android-debug
+          name: x-tunnel-${{ steps.version.outputs.name }}-debug
           path: app/build/outputs/apk/debug/*.apk
 
       - name: Upload release package outputs
         uses: actions/upload-artifact@v7
         with:
-          name: x-tunnel-android-release-unsigned
+          name: x-tunnel-${{ steps.version.outputs.name }}-release-unsigned
           path: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab

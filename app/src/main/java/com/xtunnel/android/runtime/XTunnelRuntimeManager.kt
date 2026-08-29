@@ -130,6 +130,12 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         tokenFile.delete()
         configFile.writeText(profile.toConfigJson().toString(2))
 
+        // round9（GEO 自定义规则）：用户配置了自定义规则时，把「默认规则 + 自定义规则」
+        // 合并写入 runtimeDir/rules.txt，sidecar 通过 config 的 rules_path 读取。
+        // core 的 EnsureRulesFile 只在文件不存在时才写默认模板；这里预写入合并后的
+        // 完整规则，保证自定义规则生效时默认规则不丢失（core 会热重载 watch 此文件）。
+        writeRulesIfNeeded()
+
         // round9：每次建立新连接时重置流量缓存基线，避免上一次连接残留值被诊断包读到。
         lastTrafficSent = -1L
         lastTrafficReceived = -1L
@@ -353,6 +359,36 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         LogStore.append(LogStore.Level.Error, "等待数据通道就绪超时（≥${CHANNELS_READY_TIMEOUT_MILLIS}ms），降级放行数据面")
     }
 
+    // round9：手动触发分流规则重载（调 sidecar control API POST /v1/rules/reload）。
+    // 供 RouteCard 的「立即更新规则」按钮调用；隧道未运行/sidecar 未就绪返回 false。
+    fun reloadRules(): Boolean {
+        val ready = readyInfo
+        val bearer = token
+        if (ready == null || bearer.isBlank()) return false
+        return runCatching {
+            request("POST", "${ready.controlUrl}/v1/rules/reload", bearer)
+            true
+        }.getOrDefault(false)
+    }
+
+    // round9（GEO 自定义规则）：用户配置了自定义规则时，把「默认规则 + 自定义规则」
+    // 合并写入 runtimeDir/rules.txt。无自定义规则时删掉旧文件（避免残留上次规则），
+    // 让 core 走默认模板 + 自动下载。失败静默——启动不因规则文件写失败而中断。
+    private fun writeRulesIfNeeded() {
+        runCatching {
+            val rulesFile = File(runtimeDir, RULES_FILE)
+            val routeCfg = RouteConfigStore.load(appContext)
+            if (!routeCfg.enabled || routeCfg.customRules.isEmpty()) {
+                rulesFile.delete()
+                return@runCatching
+            }
+            val merged = DEFAULT_RULES + routeCfg.customRules.joinToString("\n", postfix = "\n")
+            rulesFile.writeText(merged)
+        }.onFailure { e ->
+            LogStore.append(LogStore.Level.Error, "写入自定义规则失败: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
     // 第 9 点：诊断数据采集——返回 JSON 文本，供导出诊断包（zip）拼装。
     // 含流量统计(/v1/stats)、连接状态(/v1/status)、基础信息（token 脱敏）。
     fun collectDiagnostics(): String {
@@ -492,8 +528,16 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             .apply { if (ipStrategy.isNotBlank()) put("ips", ipStrategy) }
             .apply { if (dnsCacheTtl.isNotBlank()) put("dns_cache_ttl", dnsCacheTtl) }
             // GEO 分流（§2.3）：全局开关 on 时启用 sidecar route 引擎。
-            // rules_path/geo_dir 留空 → sidecar 用默认模板 + 自动下载 GEO 库。
+            // route_enabled=true 时 sidecar 用默认模板 + 自动下载 GEO 库。
+            // round9：用户配置了自定义规则时，启动前已写 runtimeDir/rules.txt，
+            // 这里传 rules_path 指向它，sidecar 读取"默认+自定义"合并后的规则。
             .put("route_enabled", RouteConfigStore.load(appContext).enabled)
+            .apply {
+                val routeCfg = RouteConfigStore.load(appContext)
+                if (routeCfg.enabled && routeCfg.customRules.isNotEmpty()) {
+                    put("rules_path", File(runtimeDir, RULES_FILE).absolutePath)
+                }
+            }
             .put("dial_timeout", "5s")
             .put("ws_handshake_timeout", "5s")
             .put("reconnect_delay", "1s")
@@ -516,12 +560,28 @@ class XTunnelRuntimeManager private constructor(context: Context) {
 
     companion object {
         private const val NATIVE_EXECUTABLE = "libxtunnel.so"
+        private const val RULES_FILE = "rules.txt"
         private const val READY_TIMEOUT_MILLIS = 10_000L
         private const val CHANNELS_READY_TIMEOUT_MILLIS = 15_000L
         private const val HTTP_TIMEOUT_MILLIS = 2_000L
         private const val TRAFFIC_POLL_MILLIS = 3_000L
         private const val MAX_LOG_LINES = 200
         private const val MAX_DETAIL_CHARS = 160
+
+        // round9：与 core internal/route/rules.go 的 DefaultRules 镜像一致——写 rules.txt
+        // 时先放默认模板，再把用户自定义规则追加到末尾（自定义规则最后匹配，可覆盖默认）。
+        private const val DEFAULT_RULES = """# 默认路由规则（每行一条，格式: 行为,条件）
+# 行为: proxy = 走 WARP 隧道；direct = 本地直连；reject = 拒绝连接（拦截广告）
+REJECT,geosite:category-ads-all
+direct,geosite:private
+direct,geoip:private
+proxy,geosite:google
+proxy,geoip:google
+proxy,geosite:geolocation-!cn
+proxy,geoip:telegram
+direct,geosite:cn
+direct,geoip:cn
+"""
 
         @Volatile
         private var instance: XTunnelRuntimeManager? = null

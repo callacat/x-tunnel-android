@@ -60,6 +60,21 @@ bash ./scripts/verify-release-assets.sh
 Tags matching `vMAJOR.MINOR.PATCH` run `.github/workflows/release.yml`. The release workflow builds the x-tunnel sidecar and tun2socks runtime for `arm64-v8a` and `x86_64`, builds a signed release APK/AAB, generates `SHA256SUMS`, and uploads assets to GitHub Releases.
 The Android `versionName` and `versionCode` are derived from the release tag during the workflow.
 
+### 版本号自动递增规范（东哥 2026-08-29 拍板，BLOCKING）
+
+调试包（ci.yml 每次 push 构建）的版本号**禁止手写死**，遵循自增规则：
+
+- **round N = `git rev-list --count HEAD`**（仓库提交总数）。每次 push 新代码，N 自动 +1，无需人工改。
+- `versionName` 形态：`0.1.0-round<N>`；`versionCode` = N（单调递增，保证可覆盖安装）。
+- **三处同一来源**（env 单源注入）：
+  1. `versionName` ← ci.yml 的 `Compute version` step 算好写 `XTUNNEL_ANDROID_VERSION_NAME`，`app/build.gradle.kts` 只读 env（默认 `0.1.0-dev` 仅供本地无 env 兜底，不参与发布）。
+  2. APK 文件名 ← ci.yml artifact 名 `x-tunnel-<versionName>-debug`，与 versionName 一致。
+  3. 首页显示 ← `RuntimeCard` 动态读 `packageInfo.versionName`，与 versionName 一致。
+- 正式 release 例外：`release.yml` 由 tag `vMAJOR.MINOR.PATCH` 派生 versionName/Code，覆盖自增规则。
+
+> 禁止行为：在 `app/build.gradle.kts` 里手写 `orElse("0.1.0-round<N>")` 硬编码轮次。
+> 正确做法：本地手动构建不传 env 时用 `0.1.0-dev`；发布一律走 CI（自增或 tag）。
+
 Required repository secrets:
 
 - `ANDROID_KEYSTORE_BASE64`

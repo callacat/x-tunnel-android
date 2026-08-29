@@ -7,11 +7,14 @@ val releaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_FILE")
 val releaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD")
 val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS")
 val releaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD")
+// 版本号单源：权威值由 CI 注入（XTUNNEL_ANDROID_VERSION_CODE/NAME），
+// 见 .github/workflows/ci.yml / release.yml。本文件只消费这两个 env，不再手写
+// round 号。默认值仅供本地无 env 的手动构建兜底，不参与发布（发布必走 CI）。
 val appVersionCode = providers.environmentVariable("XTUNNEL_ANDROID_VERSION_CODE")
     .map(String::toInt)
     .orElse(1)
 val appVersionName = providers.environmentVariable("XTUNNEL_ANDROID_VERSION_NAME")
-    .orElse("0.1.0-round8")
+    .orElse("0.1.0-dev")
 
 android {
     namespace = "com.xtunnel.android"

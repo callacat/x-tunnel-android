@@ -37,6 +37,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -225,7 +227,6 @@ private fun DashboardScreen(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
                 actions = {
-                    TextButton(onClick = onOpenPerApp) { Text("分应用") }
                     TextButton(onClick = onOpenLogs) { Text("日志") }
                     TextButton(onClick = onOpenProfiles) { Text("配置") }
                 },
@@ -392,16 +393,19 @@ private fun PerAppCard(
 
 // GEO 分流·Dashboard 开关卡片（定稿方案 v2 §2.3）：全局代理 / GEO 分流。
 // GEO 分流 = sidecar route 引擎启用（默认规则：广告拦截+国内直连+境外走隧道）。
+// round9：加自定义规则编辑 + 自动更新开关（见 CustomRulesDialog）。
 @Composable
 private fun RouteCard(locked: Boolean) {
     val context = LocalContext.current
-    var enabled by remember { mutableStateOf(RouteConfigStore.load(context).enabled) }
+    var config by remember { mutableStateOf(RouteConfigStore.load(context)) }
+    var showRulesEditor by remember { mutableStateOf(false) }
+    val enabled = config.enabled
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -423,17 +427,159 @@ private fun RouteCard(locked: Boolean) {
                     checked = enabled,
                     enabled = !locked,
                     onCheckedChange = { v ->
-                        enabled = v
-                        RouteConfigStore.save(context, RouteConfigStore.Config(enabled = v))
+                        config = config.copy(enabled = v)
+                        RouteConfigStore.save(context, config)
                         android.widget.Toast.makeText(context, "已保存，重启连接后生效", android.widget.Toast.LENGTH_SHORT).show()
                     },
                 )
             }
+
+            if (enabled) {
+                // round9：自定义规则 + 自动更新（仅 GEO 开启时展示，与分流语义相关）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("自定义规则", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (config.customRules.isEmpty()) "未配置自定义规则（可选）"
+                            else "已配置 ${config.customRules.size} 条自定义规则",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(
+                        onClick = { showRulesEditor = true },
+                        enabled = !locked,
+                    ) { Text("编辑") }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("自动更新规则/GEO 库", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (config.autoUpdate) "已开启：${config.updateFrequency.label}更新"
+                            else "已关闭：手动更新",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = config.autoUpdate,
+                        enabled = !locked,
+                        onCheckedChange = { v ->
+                            config = config.copy(autoUpdate = v)
+                            RouteConfigStore.save(context, config)
+                        },
+                    )
+                }
+
+                if (config.autoUpdate) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        RouteConfigStore.UpdateFrequency.entries.forEach { freq ->
+                            FilterChip(
+                                selected = config.updateFrequency == freq,
+                                onClick = {
+                                    config = config.copy(updateFrequency = freq)
+                                    RouteConfigStore.save(context, config)
+                                },
+                                label = { Text(freq.label) },
+                                enabled = !locked,
+                            )
+                        }
+                    }
+                } else {
+                    // 手动更新：调 sidecar control API /v1/rules/reload（运行时生效）。
+                    // 隧道未运行时提示先启动；失败静默（sidecar 未就绪时手动更新自然无效）。
+                    OutlinedButton(
+                        onClick = {
+                            val snapshot = RuntimeStateStore.snapshot()
+                            if (snapshot.state != RuntimeState.Ready) {
+                                android.widget.Toast.makeText(context, "隧道未运行，请先启动连接", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                val ok = runCatching {
+                                    XTunnelRuntimeManager.get(context).reloadRules()
+                                }.getOrDefault(false)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (ok) "规则已重新加载" else "重新加载失败，请查看日志",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        enabled = !locked,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("立即更新规则") }
+                }
+            }
+
             if (locked) {
                 Text("运行中已锁定，停止后可调整", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
+
+    if (showRulesEditor) {
+        CustomRulesDialog(
+            initial = config.customRules,
+            onDismiss = { showRulesEditor = false },
+            onSave = { rules ->
+                config = config.copy(customRules = rules)
+                RouteConfigStore.save(context, config)
+                showRulesEditor = false
+            },
+        )
+    }
+}
+
+// round9：自定义规则编辑对话框（每行一条 `行为,条件`）。
+@Composable
+private fun CustomRulesDialog(
+    initial: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (List<String>) -> Unit,
+) {
+    var text by remember { mutableStateOf(initial.joinToString("\n")) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("自定义分流规则") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth().height(200.dp),
+                    placeholder = { Text("每行一条，格式：行为,条件\n例：proxy,domain:google.com\ndirect,domain:*.example.com\n支持 domain/geosite/geoip 条件") },
+                )
+                Text(
+                    "行为：proxy=走隧道 direct=直连 reject=拦截\n条件：domain:域名后缀（支持 *.xx 通配） / geosite:分类 / geoip:国家",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val rules = text.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") }
+                    .toList()
+                onSave(rules)
+            }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 // 分应用代理·设置页：三模式选择（off/allow/disallow）+ 应用列表勾选。
@@ -448,6 +594,16 @@ private fun PerAppScreen(onBack: () -> Unit) {
         InstalledApps.scan(context, excludes = setOf(selfPackage))
     }
     val running = remember { mutableStateOf(false) }
+    // round9：搜索过滤（按应用名/包名模糊匹配）。空串时不过滤，显示全部。
+    var query by remember { mutableStateOf("") }
+    val filteredApps = remember(apps, query) {
+        val q = query.trim()
+        if (q.isEmpty()) apps
+        else apps.filter {
+            it.label.contains(q, ignoreCase = true) ||
+                it.packageName.contains(q, ignoreCase = true)
+        }
+    }
 
     // 页面可见期间刷新运行态。
     LaunchedEffect(Unit) {
@@ -528,14 +684,24 @@ private fun PerAppScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
+                // round9：搜索框——按应用名/包名实时过滤，清空显示全部。
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("搜索应用（应用名或包名）…") },
+                    singleLine = true,
+                )
                 if (apps.isEmpty()) {
                     Text("未找到可代理的第三方应用（需已安装且有启动入口与联网权限）")
+                } else if (filteredApps.isEmpty()) {
+                    Text("无匹配应用，换个关键词试试", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     LazyColumn(
                         modifier = Modifier.weight(1f, fill = true),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        items(apps, key = { it.packageName }) { app ->
+                        items(filteredApps, key = { it.packageName }) { app ->
                             AppRow(
                                 label = app.label,
                                 packageName = app.packageName,
