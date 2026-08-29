@@ -13,6 +13,7 @@ import android.content.Context
  *     direct,domain:*.example.com），启动时合并进 rules.txt 传给 sidecar。
  *   - autoUpdate：GEO/规则库自动更新开关。
  *   - updateFrequency：更新频率（daily/weekly）。
+ *   - rulesSourceUrl：规则库远程源 URL（空 = 用 core 内置默认 DefaultRulesURL）。
  *
  * 与分应用（PerAppConfigStore）对称——代理模式也是全局语义，独立 store，
  * 不随 profile 增删改而变。
@@ -23,6 +24,7 @@ object RouteConfigStore {
     private const val KEY_CUSTOM_RULES = "route_custom_rules"
     private const val KEY_AUTO_UPDATE = "route_auto_update"
     private const val KEY_UPDATE_FREQ = "route_update_freq"
+    private const val KEY_RULES_SOURCE_URL = "route_rules_source_url"
 
     enum class UpdateFrequency(val raw: String, val label: String) {
         Daily("daily", "每日"),
@@ -39,6 +41,7 @@ object RouteConfigStore {
         val customRules: List<String> = emptyList(),
         val autoUpdate: Boolean = true,
         val updateFrequency: UpdateFrequency = UpdateFrequency.Daily,
+        val rulesSourceUrl: String = "",
     )
 
     fun load(context: Context): Config {
@@ -53,6 +56,7 @@ object RouteConfigStore {
                 ?: emptyList(),
             autoUpdate = prefs.getBoolean(KEY_AUTO_UPDATE, true),
             updateFrequency = UpdateFrequency.fromRaw(prefs.getString(KEY_UPDATE_FREQ, null)),
+            rulesSourceUrl = prefs.getString(KEY_RULES_SOURCE_URL, null).orEmpty(),
         )
     }
 
@@ -63,6 +67,7 @@ object RouteConfigStore {
             .putString(KEY_CUSTOM_RULES, config.customRules.joinToString("\n"))
             .putBoolean(KEY_AUTO_UPDATE, config.autoUpdate)
             .putString(KEY_UPDATE_FREQ, config.updateFrequency.raw)
+            .putString(KEY_RULES_SOURCE_URL, config.rulesSourceUrl)
             .apply()
     }
 }

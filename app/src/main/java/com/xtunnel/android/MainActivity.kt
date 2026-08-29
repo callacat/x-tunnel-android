@@ -399,6 +399,7 @@ private fun RouteCard(locked: Boolean) {
     val context = LocalContext.current
     var config by remember { mutableStateOf(RouteConfigStore.load(context)) }
     var showRulesEditor by remember { mutableStateOf(false) }
+    var showSourceUrlEditor by remember { mutableStateOf(false) }
     val enabled = config.enabled
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -454,6 +455,28 @@ private fun RouteCard(locked: Boolean) {
                         onClick = { showRulesEditor = true },
                         enabled = !locked,
                     ) { Text("编辑") }
+                }
+
+                // round9：规则源 URL（自动更新拉取规则库的远程地址；空 = 用 core 内置默认源）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("规则源 URL", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (config.rulesSourceUrl.isBlank()) "使用内置默认规则源"
+                            else config.rulesSourceUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                        )
+                    }
+                    TextButton(
+                        onClick = { showSourceUrlEditor = true },
+                        enabled = !locked,
+                    ) { Text("设置") }
                 }
 
                 Row(
@@ -539,6 +562,54 @@ private fun RouteCard(locked: Boolean) {
             },
         )
     }
+
+    if (showSourceUrlEditor) {
+        SourceUrlDialog(
+            initial = config.rulesSourceUrl,
+            onDismiss = { showSourceUrlEditor = false },
+            onSave = { url ->
+                config = config.copy(rulesSourceUrl = url.trim())
+                RouteConfigStore.save(context, config)
+                showSourceUrlEditor = false
+            },
+        )
+    }
+}
+
+// round9：规则源 URL 编辑对话框（自动更新拉取规则库的远程地址）。
+@Composable
+private fun SourceUrlDialog(
+    initial: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("规则源 URL") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("https://…/rules.txt") },
+                    singleLine = true,
+                )
+                Text(
+                    "留空则使用内置默认规则源。自动更新开启时按频率从此 URL 拉取最新规则库。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(text) }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 // round9：自定义规则编辑对话框（每行一条 `行为,条件`）。
