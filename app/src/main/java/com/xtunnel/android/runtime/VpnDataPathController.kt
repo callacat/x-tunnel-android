@@ -4,6 +4,7 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import com.xtunnel.android.model.PerAppConfigStore
+import com.xtunnel.android.model.RouteConfigStore
 import com.xtunnel.android.model.XTunnelProfile
 import hev.htproxy.TProxyService
 import java.io.File
