@@ -31,8 +31,12 @@ jobs:
       - name: Checkout x-tunnel core
         uses: actions/checkout@v6
         with:
-          # 自研 fork：main 已合入 feat/dns-cache 三 commit，作为 Android sidecar 构建基线
+          # 自研 fork：route 分流线在 feat/route-engine 分支（r41 起）。
+          # main 已被上游同步覆盖（无 route_enabled 配置项），从 main 构建会
+          # 因 UnknownFields 拒绝 route_enabled 配置导致 sidecar 启动失败
+          # （round39 已踩过）。route 线合回 main 前固定用本分支。
           repository: callacat/x-tunnel
+          ref: feat/route-engine
           path: external/x-tunnel
 
       - name: Setup Java

@@ -56,7 +56,10 @@ class VpnDataPathController(private val service: VpnService) {
             .setMtu(VPN_MTU)
             .addAddress(PRIVATE_V4_CLIENT, PRIVATE_V4_PREFIX)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer(DEFAULT_DNS)
+            // round41：GEO 模式下 TUN DNS 用国内 DNS（直连可达、不占隧道）。
+            // r40 实测 DNS 全走隧道（1.1.1.1:53 ×70 次/分钟），每次连接都叠加
+            // 隧道 DNS 往返 → 国内访问感知慢的主因之一。全局模式保持 1.1.1.1。
+            .addDnsServer(if (RouteConfigStore.load(service).enabled) GEO_DNS else DEFAULT_DNS)
 
         // 分应用代理·三模式（定稿方案 v2 §2.1）：off/allow/disallow。
         // x-tunnel 例外：自身在 VPN 外（sidecar 拨号走物理网络），故
@@ -140,6 +143,8 @@ class VpnDataPathController(private val service: VpnService) {
         private const val PRIVATE_V4_CLIENT = "172.31.255.2"
         private const val PRIVATE_V4_PREFIX = 30
         private const val DEFAULT_DNS = "1.1.1.1"
+        // round41：GEO 模式的 TUN DNS——阿里公共 DNS，境内直连可达，不经隧道。
+        private const val GEO_DNS = "223.5.5.5"
     }
 }
 

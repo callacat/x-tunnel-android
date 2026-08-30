@@ -565,32 +565,31 @@ private fun RouteCard(locked: Boolean) {
                             )
                         }
                     }
-                } else {
-                    // 手动更新：规则文件重载 + GEO 库下载更新一步触发（round40）。
-                    // 隧道未运行时提示先启动；结果经 RouteCard 状态行轮询可见。
-                    OutlinedButton(
-                        onClick = {
-                            val snapshot = RuntimeStateStore.snapshot()
-                            if (snapshot.state != RuntimeState.Ready) {
-                                android.widget.Toast.makeText(context, "隧道未运行，请先启动连接", android.widget.Toast.LENGTH_SHORT).show()
-                            } else {
-                                val runtime = XTunnelRuntimeManager.get(context)
-                                val rulesOk = runCatching { runtime.reloadRules() }.getOrDefault(false)
-                                val geoOk = runCatching { runtime.updateGeo() }.getOrDefault(false)
-                                android.widget.Toast.makeText(
-                                    context,
-                                    when {
-                                        rulesOk && geoOk -> "已触发更新：GEO 库下载中，稍候看运行状态"
-                                        rulesOk -> "规则已重载；GEO 更新触发失败"
-                                        else -> "更新触发失败，请查看日志"
-                                    },
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        },
-                        enabled = !locked,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("立即更新规则/GEO 库") }
+                }
+
+                // 手动更新：规则文件重载 + GEO 库下载更新一步触发（round40）。
+                // round41 修复：①更新 GEO 依赖隧道（下载走隧道出口），运行中才可点
+                // （之前 enabled=!locked 语义写反——未连接可点、连接后反而变灰，与
+                // 提示语自相矛盾，东哥 r40 实测）；②自动/手动模式都显示本按钮。
+                OutlinedButton(
+                    onClick = {
+                        val runtime = XTunnelRuntimeManager.get(context)
+                        val rulesOk = runCatching { runtime.reloadRules() }.getOrDefault(false)
+                        val geoOk = runCatching { runtime.updateGeo() }.getOrDefault(false)
+                        android.widget.Toast.makeText(
+                            context,
+                            when {
+                                rulesOk && geoOk -> "已触发更新：GEO 库下载中，稍候看运行状态"
+                                rulesOk -> "规则已重载；GEO 更新触发失败"
+                                else -> "更新触发失败，请查看日志"
+                            },
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                    enabled = locked,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (locked) "立即更新规则/GEO 库" else "立即更新规则/GEO 库（需先连接）")
                 }
             }
 

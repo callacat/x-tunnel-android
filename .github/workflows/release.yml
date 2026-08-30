@@ -38,7 +38,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: callacat/x-tunnel
-          ref: main
+          # route 分流线在 feat/route-engine（见 ci.yml 注释）；r41 起 release 同步切换
+          ref: feat/route-engine
           path: external/x-tunnel
 
       - name: Validate tag
