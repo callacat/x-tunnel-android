@@ -1055,7 +1055,39 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
             snapshot.pid?.let {
                 Text(text = "核心 PID：$it")
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            // 检查更新（东哥 2026-08-30 拍板）：点击跳浏览器打开最新版下载页。
+            // 不做应用内静默下载——debug 轮次靠 CI 出包、正式版靠 GitHub Release，
+            // 浏览器打开 Releases 页让东哥自己挑 APK/AAB，链路最短。
+            OutlinedButton(
+                onClick = { openReleasesPage(context) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("检查更新")
+            }
         }
+    }
+}
+
+// DOWNLOAD_PAGE_URL 是「检查更新」跳转的下载页：GitHub Releases latest
+// （302 到最新正式版 tag 页）。正式版发布在 callacat/x-tunnel-android，
+// 与 CI release.yml 上传产物同一个仓库。
+private const val DOWNLOAD_PAGE_URL = "https://github.com/callacat/x-tunnel-android/releases/latest"
+
+// openReleasesPage 用系统浏览器打开下载页；设备无浏览器（罕见，如纯系统镜像）
+// 时 Toast 兜底，不让点击无响应。
+private fun openReleasesPage(context: android.content.Context) {
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(DOWNLOAD_PAGE_URL))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }.onFailure {
+        android.widget.Toast.makeText(
+            context,
+            "未找到可用的浏览器，请手动访问：$DOWNLOAD_PAGE_URL",
+            android.widget.Toast.LENGTH_LONG,
+        ).show()
     }
 }
 
