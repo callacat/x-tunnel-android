@@ -18,6 +18,7 @@ object InstalledApps {
     data class AppEntry(
         val packageName: String,
         val label: String,
+        val system: Boolean = false,
     ) {
         fun icon(context: Context): Drawable? =
             runCatching {
@@ -36,14 +37,18 @@ object InstalledApps {
         }.getOrDefault(emptyList())
             .asSequence()
             .filter { it.packageName !in excludes }
-            .filter { (it.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM == 0 }
+            // round45：不再剔除系统应用（东哥反馈：分应用时需要勾选系统应用，
+            // 如系统浏览器/应用商店）。有 INTERNET 权限 + launcher 入口的
+            // 系统应用同样会产生用户流量，理应可勾选。纯后台组件仍被
+            // hasLauncherIntent 过滤。
             .filter { hasInternetPermission(it) }
             .filter { hasLauncherIntent(pm, it.packageName) }
             .map {
                 val label = runCatching { it.applicationInfo?.loadLabel(pm)?.toString() }.getOrNull()
-                AppEntry(it.packageName, label.orEmpty().ifBlank { it.packageName })
+                val system = (it.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM != 0
+                AppEntry(it.packageName, label.orEmpty().ifBlank { it.packageName }, system)
             }
-            .sortedBy { it.label.lowercase() }
+            .sortedWith(compareBy({ it.system }, { it.label.lowercase() }))
             .toList()
     }
 

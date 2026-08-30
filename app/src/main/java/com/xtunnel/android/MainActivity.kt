@@ -825,7 +825,7 @@ private fun PerAppScreen(onBack: () -> Unit) {
                     singleLine = true,
                 )
                 if (apps.isEmpty()) {
-                    Text("未找到可代理的第三方应用（需已安装且有启动入口与联网权限）")
+                    Text("未找到可代理的应用（需已安装、有启动入口与联网权限）")
                 } else if (filteredApps.isEmpty()) {
                     Text("无匹配应用，换个关键词试试", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
@@ -833,18 +833,35 @@ private fun PerAppScreen(onBack: () -> Unit) {
                         modifier = Modifier.weight(1f, fill = true),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        items(filteredApps, key = { it.packageName }) { app ->
-                            AppRow(
-                                label = app.label,
-                                packageName = app.packageName,
-                                icon = app.icon(context),
-                                checked = app.packageName in config.packages,
-                                onToggle = { checked ->
-                                    val pkgs = if (checked) config.packages + app.packageName
-                                    else config.packages - app.packageName
-                                    config = config.copy(packages = pkgs)
-                                },
-                            )
+                        // round45：第三方在前、系统应用在后（InstalledApps 已按此排序），
+                        // 首次出现处插分组标题行——系统应用可见可勾（东哥 r44 反馈）。
+                        var lastSystem: Boolean? = null
+                        filteredApps.forEach { app ->
+                            if (app.system != lastSystem) {
+                                lastSystem = app.system
+                                item(key = "header-${app.system}", contentType = "header") {
+                                    Text(
+                                        if (app.system) "—— 系统应用 ——"
+                                        else "—— 第三方应用 ——",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 6.dp),
+                                    )
+                                }
+                            }
+                            item(key = app.packageName, contentType = "app") {
+                                AppRow(
+                                    label = app.label,
+                                    packageName = app.packageName,
+                                    icon = app.icon(context),
+                                    checked = app.packageName in config.packages,
+                                    onToggle = { checked ->
+                                        val pkgs = if (checked) config.packages + app.packageName
+                                        else config.packages - app.packageName
+                                        config = config.copy(packages = pkgs)
+                                    },
+                                )
+                            }
                         }
                     }
                 }
