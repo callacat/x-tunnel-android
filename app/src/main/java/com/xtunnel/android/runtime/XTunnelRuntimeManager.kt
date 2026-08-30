@@ -418,7 +418,11 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                     val tmp = File(dst.absolutePath + ".tmp")
                     c.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
                     if (tmp.length() < 1024) throw IOException("下载内容过短")
-                    tmp.renameTo(dst) || (tmp.copyTo(dst, overwrite = true) && tmp.delete())
+                    if (!tmp.renameTo(dst)) {
+                        // rename 跨文件系统会失败——回退 copy+delete（原子性让位可用性）。
+                        tmp.copyTo(dst, overwrite = true)
+                        tmp.delete()
+                    }
                 }
                 return true
             }.onFailure { e ->
