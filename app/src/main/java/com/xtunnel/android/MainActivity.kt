@@ -567,29 +567,42 @@ private fun RouteCard(locked: Boolean) {
                     }
                 }
 
-                // 手动更新：规则文件重载 + GEO 库下载更新一步触发（round40）。
-                // round41 修复：①更新 GEO 依赖隧道（下载走隧道出口），运行中才可点
-                // （之前 enabled=!locked 语义写反——未连接可点、连接后反而变灰，与
-                // 提示语自相矛盾，东哥 r40 实测）；②自动/手动模式都显示本按钮。
+                // 手动更新（round43 重构，东哥 r42 后建议「无论开没开代理都可以更新」）：
+                //   未连接 → App 直连 GitHub 加速镜像（gh-proxy.org/com）下载 GEO 库到
+                //            共享 geo 目录，下次启动 sidecar 即加载；
+                //   连接中 → 规则重载 + sidecar /v1/route/geo/update（下载走隧道）。
+                // 两种状态都可点；后台线程执行（镜像下载可达分钟级，不能卡 UI）。
                 OutlinedButton(
                     onClick = {
                         val runtime = XTunnelRuntimeManager.get(context)
-                        val rulesOk = runCatching { runtime.reloadRules() }.getOrDefault(false)
-                        val geoOk = runCatching { runtime.updateGeo() }.getOrDefault(false)
-                        android.widget.Toast.makeText(
-                            context,
-                            when {
-                                rulesOk && geoOk -> "已触发更新：GEO 库下载中，稍候看运行状态"
-                                rulesOk -> "规则已重载；GEO 更新触发失败"
-                                else -> "更新触发失败，请查看日志"
-                            },
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                        android.widget.Toast.makeText(context, "GEO 更新开始…", android.widget.Toast.LENGTH_SHORT).show()
+                        Thread {
+                            if (locked) {
+                                val rulesOk = runCatching { runtime.reloadRules() }.getOrDefault(false)
+                                val geoOk = runCatching { runtime.updateGeo() }.getOrDefault(false)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    when {
+                                        rulesOk && geoOk -> "已触发更新：GEO 库下载中，稍候看运行状态"
+                                        rulesOk -> "规则已重载；GEO 更新触发失败"
+                                        else -> "更新触发失败，请查看日志"
+                                    },
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            } else {
+                                val ok = runCatching { runtime.updateGeoOffline() }.getOrDefault(false)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (ok) "GEO 库已通过加速镜像更新，下次连接生效"
+                                    else "镜像更新失败，请查看日志或连接后重试",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }.apply { name = "x-tunnel-geo-offline"; isDaemon = true; start() }
                     },
-                    enabled = locked,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(if (locked) "立即更新规则/GEO 库" else "立即更新规则/GEO 库（需先连接）")
+                    Text(if (locked) "立即更新规则/GEO 库" else "立即更新 GEO 库（加速镜像直连）")
                 }
             }
 

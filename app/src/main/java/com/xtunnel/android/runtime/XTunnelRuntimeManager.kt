@@ -384,6 +384,50 @@ class XTunnelRuntimeManager private constructor(context: Context) {
         }.getOrDefault(false)
     }
 
+    // round43：未连接时的 GEO 更新——App 直连 GitHub 加速镜像（gh-proxy.org /
+    // gh-proxy.com，国内可达）下载 geosite.dat / geoip-lite.dat 到共享 geo 目录，
+    // 下次启动 sidecar 即加载。开没开代理都能更新（东哥建议，2026-08-30）。
+    // 返回是否全部成功。
+    fun updateGeoOffline(): Boolean {
+        val geoDir = File(runtimeDir, "geo").apply { mkdirs() }
+        val mirrors = listOf("https://gh-proxy.org/", "https://gh-proxy.com/")
+        var allOk = true
+        for ((name, url) in listOf(
+            "geosite.dat" to "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
+            "geoip-lite.dat" to "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat",
+        )) {
+            val dst = File(geoDir, name)
+            val ok = downloadTo(mirrors, url, dst)
+            if (!ok) allOk = false
+            else LogStore.append(LogStore.Level.Info, "GEO 更新（直连镜像）：$name 已更新")
+        }
+        return allOk
+    }
+
+    private fun downloadTo(mirrors: List<String>, rawUrl: String, dst: File): Boolean {
+        for (m in mirrors) {
+            runCatching {
+                val conn = (URL(m + rawUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 15_000
+                    readTimeout = 120_000
+                    setRequestProperty("User-Agent", "x-tunnel-android (geodata updater)")
+                }
+                conn.use { c ->
+                    if (c.responseCode !in 200..299) throw IOException("HTTP ${c.responseCode}")
+                    val tmp = File(dst.absolutePath + ".tmp")
+                    c.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                    if (tmp.length() < 1024) throw IOException("下载内容过短")
+                    tmp.renameTo(dst) || (tmp.copyTo(dst, overwrite = true) && tmp.delete())
+                }
+                return true
+            }.onFailure { e ->
+                LogStore.append(LogStore.Level.Error, "GEO 镜像下载失败 $m：${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+        return false
+    }
+
     // round9（GEO 自定义规则）：用户配置了自定义规则时，把「默认规则 + 自定义规则」
     // 合并写入 runtimeDir/rules.txt。无自定义规则时删掉旧文件（避免残留上次规则），
     // 让 core 走默认模板 + 自动下载。失败静默——启动不因规则文件写失败而中断。
