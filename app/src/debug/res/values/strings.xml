@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- debug 构建桌面名带「调试版」后缀（东哥 0831 反馈：正式版/调试版图标同名易点混）。
+     仅 debug 构建生效（resource overlay），release 桌面名保持「x-tunnel」。 -->
+<resources>
+    <string name="app_name">x-tunnel 调试版</string>
+</resources>
