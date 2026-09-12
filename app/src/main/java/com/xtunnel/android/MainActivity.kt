@@ -1320,6 +1320,10 @@ private fun ProfileEditScreen(
                 label = { Text("优选 IP / 主机（-ip），逗号分隔") },
                 placeholder = { Text("如 1.2.3.4 或 cf.example.com") },
                 singleLine = true,
+                enabled = !draft.baiduRelay,
+                supportingText = if (draft.baiduRelay) {
+                    { Text("百度中转开启时优选 IP 不生效", color = MaterialTheme.colorScheme.error) }
+                } else null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
             )
             OutlinedTextField(
@@ -1338,6 +1342,54 @@ private fun ProfileEditScreen(
                 placeholder = { Text("5m / 30s / 0（禁用）") },
                 singleLine = true,
             )
+
+            // ===== 百度中转（recvv22hIoqhoe）=====
+            Text(
+                text = "百度中转（高级）",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("启用百度中转")
+                Switch(checked = draft.baiduRelay, onCheckedChange = { draft = draft.copy(baiduRelay = it) })
+            }
+            Text(
+                text = "开启后隧道先经百度云 CONNECT 中转再到服务器，用于直连被干扰（优选 IP 会被忽略）的场景；关闭则直连，行为与旧版一致。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (draft.baiduRelay) {
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = draft.baiduServer,
+                    onValueChange = { draft = draft.copy(baiduServer = it.trim()) },
+                    label = { Text("中转服务器（主机:端口）") },
+                    placeholder = { Text(XTunnelProfile.DEFAULT_BAIDU_SERVER) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                )
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = draft.baiduConnectHost,
+                    onValueChange = { draft = draft.copy(baiduConnectHost = it.trim()) },
+                    label = { Text("CONNECT 伪装 Host（留空=用服务器域名）") },
+                    placeholder = { Text(XTunnelProfile.DEFAULT_BAIDU_CONNECT_HOST) },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = baiduHeadersToText(draft.baiduHeaders),
+                    onValueChange = { draft = draft.copy(baiduHeaders = baiduHeadersFromText(it)) },
+                    label = { Text("中转请求头（每行 名称: 值）") },
+                    placeholder = { Text("X-T5-Auth: …\nUser-Agent: …") },
+                    minLines = 3,
+                    maxLines = 6,
+                )
+            }
 
             if (error != null) {
                 Text("校验：$error", color = MaterialTheme.colorScheme.error)
@@ -1483,3 +1535,20 @@ private fun lightColors() = lightColorScheme(
     error = Color(0xFFB91C1C),
     onError = Color.White,
 )
+// ===== 百度中转：请求头 Map <-> 「每行 名称: 值」编辑文本 =====
+
+private fun baiduHeadersToText(headers: Map<String, String>): String =
+    headers.entries.joinToString("\n") { (k, v) -> "$k: $v" }
+
+private fun baiduHeadersFromText(text: String): Map<String, String> {
+    val map = LinkedHashMap<String, String>()
+    text.lineSequence().forEach { line ->
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) return@forEach
+        val idx = trimmed.indexOf(':')
+        val key = trimmed.substring(0, maxOf(idx, 0)).trim()
+        if (key.isEmpty() || idx < 0) return@forEach
+        map[key] = trimmed.substring(idx + 1).trim()
+    }
+    return map
+}

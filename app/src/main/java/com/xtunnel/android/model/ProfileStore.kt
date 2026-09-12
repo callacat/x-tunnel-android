@@ -62,6 +62,10 @@ object ProfileStore {
         put("dial_ips", profile.dialIPs)
         put("ip_strategy", profile.ipStrategy)
         put("dns_cache_ttl", profile.dnsCacheTtl)
+        put("baidu_relay", profile.baiduRelay)
+        put("baidu_server", profile.baiduServer)
+        put("baidu_connect_host", profile.baiduConnectHost)
+        put("baidu_headers", JSONObject(profile.baiduHeaders as Map<*, *>))
     }
 
     fun fromJson(json: JSONObject): XTunnelProfile = json.let {
@@ -81,6 +85,19 @@ object ProfileStore {
             dialIPs = it.optString("dial_ips", ""),
             ipStrategy = it.optString("ip_strategy", "4,6"),
             dnsCacheTtl = it.optString("dns_cache_ttl", "5m"),
+            baiduRelay = it.optBoolean("baidu_relay", false),
+            baiduServer = it.optString("baidu_server", XTunnelProfile.DEFAULT_BAIDU_SERVER),
+            baiduConnectHost = it.optString("baidu_connect_host", XTunnelProfile.DEFAULT_BAIDU_CONNECT_HOST),
+            baiduHeaders = runCatching {
+                val obj = it.optJSONObject("baidu_headers") ?: return@runCatching XTunnelProfile.DEFAULT_BAIDU_HEADERS
+                val keys = obj.keys()
+                val map = LinkedHashMap<String, String>()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    map[key] = obj.optString(key)
+                }
+                if (map.isEmpty()) XTunnelProfile.DEFAULT_BAIDU_HEADERS else map
+            }.getOrDefault(XTunnelProfile.DEFAULT_BAIDU_HEADERS),
         )
     }
 }
