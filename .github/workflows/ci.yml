@@ -16,6 +16,9 @@ env:
   ANDROID_API: "36"
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK: "27.0.12077973"
+  # 内核锚定：sidecar 从 callacat/x-tunnel 的 tag 构建（v0.5.0 起改用正式 tag，
+  # 含 CI + Release 资产 + GHCR 镜像，route 线已合入 main）。
+  CORE_REF: v0.5.0
 
 jobs:
   build:
@@ -31,12 +34,10 @@ jobs:
       - name: Checkout x-tunnel core
         uses: actions/checkout@v6
         with:
-          # 自研 fork：route 分流线在 feat/route-engine 分支（r41 起）。
-          # main 已被上游同步覆盖（无 route_enabled 配置项），从 main 构建会
-          # 因 UnknownFields 拒绝 route_enabled 配置导致 sidecar 启动失败
-          # （round39 已踩过）。route 线合回 main 前固定用本分支。
+          # 内核锚定：正式 tag v0.5.0（route 线已合入 main，含 CI + Release 资产 +
+          # GHCR 镜像）。侧 car 与内核 Release 资产同源。升级内核版本时改 CORE_REF。
           repository: callacat/x-tunnel
-          ref: feat/route-engine
+          ref: ${{ env.CORE_REF }}
           path: external/x-tunnel
 
       - name: Setup Java
