@@ -20,7 +20,26 @@ data class XTunnelProfile(
     val dialIPs: String = "",
     val ipStrategy: String = "4,6",
     val dnsCacheTtl: String = "5m",
-)
+    // 百度中转（baidu-tunnel，recvv22hIoqhoe）：开启后经百度云 CONNECT 隧道连接服务端，
+    // 用于 CF 直连被干扰的场景（内核 websocket_front_proxy 能力，默认参数=实测可用值）。
+    // ⚠ 开启时优选 IP 不生效：内核会用优选 IP 改写 CONNECT 目标为 CF IP → 百度 503。
+    val baiduRelay: Boolean = false,
+    val baiduServer: String = DEFAULT_BAIDU_SERVER,
+    val baiduConnectHost: String = DEFAULT_BAIDU_CONNECT_HOST,
+    val baiduHeaders: Map<String, String> = DEFAULT_BAIDU_HEADERS,
+) {
+    companion object {
+        const val DEFAULT_BAIDU_SERVER = "cloudnproxy.baidu.com:443"
+        const val DEFAULT_BAIDU_CONNECT_HOST = "sptest.baidu.com"
+        // 默认请求头 = 2026-09-13 实测放行值（baiduboxapp 伪装 UA + X-T5-Auth）；全部可配置，不写死在逻辑里。
+        val DEFAULT_BAIDU_HEADERS: Map<String, String> = linkedMapOf(
+            "X-T5-Auth" to "482857715",
+            "User-Agent" to "okhttp/3.11.0 Dalvik/2.1.0 (Linux; Build/RKQ1.200826.002) baiduboxapp/11.0.5.12 (Baidu; P1 11)",
+            "Proxy-Connection" to "keep-alive",
+            "Connection" to "keep-alive",
+        )
+    }
+}
 
 object DefaultProfile {
     // 点 7：不内置任何真实服务器地址/域名/token。新 profile 一律为空模板，由用户填写。
@@ -72,6 +91,12 @@ fun XTunnelProfile.validationError(): String? {
     }
     if (ipStrategy !in setOf("", "4", "6", "4,6", "6,4")) {
         return "IP 栈须为：留空、4、6、4,6、6,4 之一"
+    }
+    // 百度中转：开启时校验必填项（host:port 格式宽松，权威校验在 sidecar）。
+    if (baiduRelay) {
+        if (baiduServer.isBlank()) return "百度中转已开启：中转服务器不能为空"
+        if (!baiduServer.contains(':')) return "百度中转服务器须为 主机:端口 格式"
+        if (baiduHeaders.keys.any { it.isBlank() }) return "百度中转请求头包含空名称"
     }
     runCatching { parseDnsCacheTtlToMillis(dnsCacheTtl) }.getOrElse {
         return "DNS 缓存 TTL 无效（如 5m、30s 或 0）"

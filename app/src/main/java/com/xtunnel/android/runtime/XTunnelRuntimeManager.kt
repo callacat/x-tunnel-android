@@ -146,6 +146,7 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             LogStore.Level.Info,
             "启动参数：server=${profile.serverUrl} ipStack=${profile.ipStrategy.ifBlank { "默认" }}" +
                 " dialIPs=${profile.dialIPs.ifBlank { "无" }} ech=${profile.ech.ifBlank { "无" }}" +
+                " 百度中转=${if (profile.baiduRelay) profile.baiduServer else "关"}" +
                 " dns=${profile.dns.ifBlank { "默认" }} fallback=${profile.fallback} insecure=${profile.insecure}",
         )
 
@@ -634,10 +635,33 @@ class XTunnelRuntimeManager private constructor(context: Context) {
             .put("connections", connections)
             .put("insecure", insecure)
             .put("fallback", fallback)
-            // 抗干扰参数：仅显式配置时写入，避免空串覆盖 sidecar 默认语义
-            .apply { if (dialIPs.isNotBlank()) put("ip", dialIPs) }
+            // 抗干扰参数：仅显式配置时写入，避免空串覆盖 sidecar 默认语义。
+            // 百度中转联动：内核会用优选 IP 改写 CONNECT 目标为 CF IP → 百度 503，
+            // 故开关开启时强制忽略 dialIPs（UI 同步提示，见 MainActivity）。
+            .apply { if (dialIPs.isNotBlank() && !baiduRelay) put("ip", dialIPs) }
             .apply { if (ipStrategy.isNotBlank()) put("ips", ipStrategy) }
             .apply { if (dnsCacheTtl.isNotBlank()) put("dns_cache_ttl", dnsCacheTtl) }
+            // 百度中转（recvv22hIoqhoe）：开启时注入 websocket_front_proxy，
+            // 参数全部来自 profile（默认值=实测可用值），逻辑不硬编码。
+            .apply {
+                if (baiduRelay) {
+                    val headers = JSONObject()
+                    baiduHeaders.forEach { (k, v) -> headers.put(k, v) }
+                    put(
+                        "websocket_front_proxy",
+                        JSONObject()
+                            .put("enabled", true)
+                            .put("type", "http_connect")
+                            .put("server", baiduServer.trim())
+                            .apply {
+                                if (baiduConnectHost.isNotBlank()) {
+                                    put("connect_host", baiduConnectHost.trim())
+                                }
+                            }
+                            .put("headers", headers),
+                    )
+                }
+            }
             // GEO 分流（§2.3）：全局开关 on 时启用 sidecar route 引擎。
             // route_enabled=true 时 sidecar 用默认模板 + 自动下载 GEO 库。
             // round9：用户配置了自定义规则时，启动前已写 runtimeDir/rules.txt，

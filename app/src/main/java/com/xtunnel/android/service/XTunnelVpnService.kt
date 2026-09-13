@@ -181,6 +181,10 @@ class XTunnelVpnService : VpnService() {
         private const val EXTRA_DIAL_IPS = "dial_ips"
         private const val EXTRA_IP_STRATEGY = "ip_strategy"
         private const val EXTRA_DNS_CACHE_TTL = "dns_cache_ttl"
+        private const val EXTRA_BAIDU_RELAY = "baidu_relay"
+        private const val EXTRA_BAIDU_SERVER = "baidu_server"
+        private const val EXTRA_BAIDU_CONNECT_HOST = "baidu_connect_host"
+        private const val EXTRA_BAIDU_HEADERS = "baidu_headers"
 
         fun start(context: Context, profile: XTunnelProfile) {
             val intent = Intent(context, XTunnelVpnService::class.java)
@@ -200,6 +204,13 @@ class XTunnelVpnService : VpnService() {
                 .putExtra(EXTRA_DIAL_IPS, profile.dialIPs)
                 .putExtra(EXTRA_IP_STRATEGY, profile.ipStrategy)
                 .putExtra(EXTRA_DNS_CACHE_TTL, profile.dnsCacheTtl)
+                .putExtra(EXTRA_BAIDU_RELAY, profile.baiduRelay)
+                .putExtra(EXTRA_BAIDU_SERVER, profile.baiduServer)
+                .putExtra(EXTRA_BAIDU_CONNECT_HOST, profile.baiduConnectHost)
+                .putExtra(
+                    EXTRA_BAIDU_HEADERS,
+                    org.json.JSONObject(profile.baiduHeaders as Map<*, *>).toString(),
+                )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -236,6 +247,20 @@ class XTunnelVpnService : VpnService() {
                 dialIPs = getStringExtra(EXTRA_DIAL_IPS) ?: fallback.dialIPs,
                 ipStrategy = getStringExtra(EXTRA_IP_STRATEGY) ?: fallback.ipStrategy,
                 dnsCacheTtl = getStringExtra(EXTRA_DNS_CACHE_TTL) ?: fallback.dnsCacheTtl,
+                baiduRelay = getBooleanExtra(EXTRA_BAIDU_RELAY, fallback.baiduRelay),
+                baiduServer = getStringExtra(EXTRA_BAIDU_SERVER) ?: fallback.baiduServer,
+                baiduConnectHost = getStringExtra(EXTRA_BAIDU_CONNECT_HOST) ?: fallback.baiduConnectHost,
+                baiduHeaders = runCatching {
+                    val raw = getStringExtra(EXTRA_BAIDU_HEADERS) ?: return@runCatching fallback.baiduHeaders
+                    val obj = org.json.JSONObject(raw)
+                    val keys = obj.keys()
+                    val map = LinkedHashMap<String, String>()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        map[key] = obj.optString(key)
+                    }
+                    if (map.isEmpty()) fallback.baiduHeaders else map
+                }.getOrDefault(fallback.baiduHeaders),
             )
         }
     }
