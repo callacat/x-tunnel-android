@@ -593,10 +593,16 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                 started.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
                         // 点 5：sidecar 输出进入日志页；最近一条同时反映到状态卡详情。
-                        LogStore.append(LogStore.Level.Info, line)
+                        // UX-R3 第 1 项（时区归一）：sidecar（Go）stdout 行首自带
+                        // UTC 时间戳（Go time.Local 在 Android 回退 UTC，老马预研实锤），
+                        // 原样透传会与 App 设备时区行双轴交错（观感慢 8h）。这里剥掉
+                        // sidecar 行内时间戳，统一用 LogStore 的单时间轴
+                        // （System.currentTimeMillis + 设备时区）落盘与展示。
+                        val normalized = LogStore.normalizeSidecarLine(line)
+                        LogStore.append(LogStore.Level.Info, normalized)
                         RuntimeStateStore.update(
                             RuntimeStateStore.snapshot().copy(
-                                detail = line.take(MAX_DETAIL_CHARS),
+                                detail = normalized.take(MAX_DETAIL_CHARS),
                                 updatedAtMillis = System.currentTimeMillis(),
                             ),
                         )

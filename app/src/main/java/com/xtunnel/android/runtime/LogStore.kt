@@ -5,6 +5,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -15,6 +16,20 @@ import java.util.concurrent.CopyOnWriteArrayList
 object LogStore {
     private const val MAX_IN_MEMORY = 500
     private const val LOG_FILE = "x-tunnel.log"
+
+    // UX-R3 第 1 项（东哥 2026-09-14 反馈「日志时间不是手机本地时间」）：
+    // SimpleDateFormat 不显式设 TimeZone 时隐式跟随 JVM 默认时区——模拟器/
+    // 部分设备 persist.sys.timezone 为 GMT 时显示 UTC（v0.2.0 实锤：CT107
+    // 日志 03:17 = CST 11:17，差 8h）。这里显式取系统时区，与手机设置一致。
+    // SimpleDateFormat 非线程安全：append/render 来自多线程（traffic/output/
+    // 主线程），用 ThreadLocal 隔离，替代旧的「每行每帧 new」写法（性能 + 正确性）。
+    private val timeFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue(): SimpleDateFormat {
+            val format = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
+            format.timeZone = TimeZone.getDefault()
+            return format
+        }
+    }
 
     private val lines = CopyOnWriteArrayList<LogLine>()
     private var logFile: File? = null
@@ -28,7 +43,7 @@ object LogStore {
             "${timeFormatted()} [${level.tag}] $message"
 
         private fun timeFormatted(): String =
-            SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date(timestampMillis))
+            timeFormat.get()!!.format(Date(timestampMillis))
     }
 
     enum class Level(val tag: String) {
@@ -38,6 +53,33 @@ object LogStore {
 
     fun init(filesDir: File) {
         logFile = File(filesDir, LOG_FILE)
+    }
+
+    // sidecar（Go core）stdout 行首自带时间戳：Go log 默认 LstdFlags 输出
+    // 「2009/01/23 01:23:23」前缀，且 Android 上 Go time.Local 读不到
+    // /etc/localtime 也无 TZ env → 回退 UTC，比 App 设备时区慢 8h（老马预研
+    // 2026-09-14 实锤）。Android 侧 consumeOutput 把行原样透传，App 行（设备
+    // 时区）与 sidecar 行（UTC）双轴交错，观感=sidecar 慢 8h。
+    //
+    // 归一（UX-R3 第 1 项）：识别已知前缀格式，剥掉行内时间戳，改用
+    // App 统一时间轴（LogLine 自带 timestampMillis + 设备时区 render）：
+    //   1. Go log 默认/微秒前缀 「2026/09/14 03:17:45(.123456)? message」
+    //   2. 方括号日志前缀       「[2026-09-14 03:17:45] message」（防御性兼容）
+    // 未识别格式原样保留（内容不丢，仅去掉行首空白）。
+    private val SIDECAR_TS_PATTERNS = listOf(
+        Regex("""^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?\s"""),
+        Regex("""^\[\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?\]\s?"""),
+    )
+
+    fun normalizeSidecarLine(line: String): String {
+        val text = line.trim()
+        for (pattern in SIDECAR_TS_PATTERNS) {
+            val match = pattern.find(text)
+            if (match != null) {
+                return text.substring(match.value.length).trim()
+            }
+        }
+        return text
     }
 
     @Synchronized

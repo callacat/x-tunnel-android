@@ -26,18 +26,29 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -57,10 +68,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -1419,10 +1432,45 @@ private fun LogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var lines by remember { mutableStateOf(LogStore.snapshot()) }
 
+    // UX-R3 第 2 项（自动滚动）：新日志到达时自动滚到底部（follow）；
+    // 用户手动上滑查看历史时暂停 follow，出现「回到底部」浮动按钮。
+    val listState = rememberLazyListState()
+    var followTail by remember { mutableStateOf(true) }
+
     LaunchedEffect(Unit) {
         while (true) {
             lines = LogStore.snapshot()
             delay(1_000)
+        }
+    }
+
+    // 用户手动滚动（非程序滚到底引发）时暂停 follow；滚回底部时恢复。
+    // 注意：不能用 animateScrollToItem 做自动跟随——动画中间帧「最后一条暂不可见」
+    // 会被本判定误读为用户上滑，follow 被自己打断（reaper 续跑复查修正）。
+    // 自动跟随改用 scrollToItem（瞬时、无中间帧），本判定只认用户手势。
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            Triple(
+                listState.isScrollInProgress,
+                info.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                info.totalItemsCount,
+            )
+        }.collect { (scrolling, lastVisible, total) ->
+            if (total == 0) return@collect
+            when {
+                scrolling && lastVisible < total - 1 -> followTail = false
+                !scrolling && lastVisible >= total - 1 -> followTail = true
+            }
+        }
+    }
+
+    // follow 开启且尾部有新日志 → 瞬时滚到最后一行（key 取尾部内容，
+    // 避免 1s 轮询空转触发）。
+    val tail = lines.lastOrNull()
+    LaunchedEffect(lines.size, tail?.timestampMillis, tail?.message, followTail) {
+        if (followTail && lines.isNotEmpty()) {
+            listState.scrollToItem(lines.lastIndex)
         }
     }
 
@@ -1456,6 +1504,7 @@ private fun LogScreen(onBack: () -> Unit) {
                     TextButton(onClick = {
                         LogStore.clear()
                         lines = emptyList()
+                        followTail = true
                     }) { Text("清空") }
                     TextButton(onClick = {
                         val file = LogStore.exportFile(context) ?: return@TextButton
@@ -1475,26 +1524,56 @@ private fun LogScreen(onBack: () -> Unit) {
             )
         },
     ) { contentPadding ->
-        Column(
+        // UX-R3 第 4 项（布局/交互）：旧实现 Column+verticalScroll 全量渲染 500 条
+        // 且每行每帧 new SimpleDateFormat（预研 P0 性能硬伤）——改 LazyColumn+
+        // items(key)+行内复用 LogLine.render()（内部 ThreadLocal formatter）。
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
             if (lines.isEmpty()) {
-                Text("暂无日志")
+                Text(
+                    "暂无日志",
+                    modifier = Modifier.align(Alignment.Center),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else {
-                lines.forEach { line ->
-                    Text(
-                        text = line.render(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (line.level == LogStore.Level.Error) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    itemsIndexed(lines) { _, line ->
+                        Text(
+                            text = line.render(),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                            color = if (line.level == LogStore.Level.Error) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                    }
+                }
+                // 上滑翻历史后出现「回到底部」浮动按钮（恢复 follow）。
+                AnimatedVisibility(
+                    visible = !followTail,
+                    enter = fadeIn() + slideInVertically { it / 2 },
+                    exit = fadeOut() + slideOutVertically { it / 2 },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 16.dp),
+                ) {
+                    ExtendedFloatingActionButton(
+                        onClick = { followTail = true },
+                        text = { Text("回到底部") },
+                        icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null) },
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                 }
             }
