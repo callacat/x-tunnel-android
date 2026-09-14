@@ -26,35 +26,47 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateColorAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -72,6 +84,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +109,7 @@ import com.xtunnel.android.runtime.LogStore
 import com.xtunnel.android.runtime.RuntimeSnapshot
 import com.xtunnel.android.runtime.RuntimeState
 import com.xtunnel.android.runtime.RuntimeStateStore
+import com.xtunnel.android.runtime.UpdateChecker
 import com.xtunnel.android.runtime.XTunnelRuntimeManager
 import com.xtunnel.android.service.XTunnelVpnService
 import kotlinx.coroutines.delay
@@ -148,16 +162,27 @@ private fun RootNav(onThemeChange: (ThemeMode) -> Unit) {
         screen = Screen.Dashboard
     }
 
-    when (screen) {
-        Screen.Dashboard -> DashboardScreen(
-            onOpenProfiles = { screen = Screen.Profiles },
-            onOpenPerApp = { screen = Screen.PerApp },
-            onOpenLogs = { screen = Screen.Logs },
-            onThemeChange = onThemeChange,
-        )
-        Screen.Profiles -> ProfileListScreen(onBack = { screen = Screen.Dashboard })
-        Screen.PerApp -> PerAppScreen(onBack = { screen = Screen.Dashboard })
-        Screen.Logs -> LogScreen(onBack = { screen = Screen.Dashboard })
+    // UX-R3 第 4 项·动效（codex 预研 D / claude 预研 3.3）：页面切换从硬切屏
+    // 改 150ms 淡入+轻滑过渡（系统动画关闭时 Compose 自动降级为瞬切）。
+    AnimatedContent(
+        targetState = screen,
+        transitionSpec = {
+            (fadeIn(tween(150)) + slideInHorizontally(tween(150)) { it / 8 })
+                togetherWith (fadeOut(tween(120)) + slideOutHorizontally(tween(150)) { -it / 8 })
+        },
+        label = "screen",
+    ) { target ->
+        when (target) {
+            Screen.Dashboard -> DashboardScreen(
+                onOpenProfiles = { screen = Screen.Profiles },
+                onOpenPerApp = { screen = Screen.PerApp },
+                onOpenLogs = { screen = Screen.Logs },
+                onThemeChange = onThemeChange,
+            )
+            Screen.Profiles -> ProfileListScreen(onBack = { screen = Screen.Dashboard })
+            Screen.PerApp -> PerAppScreen(onBack = { screen = Screen.Dashboard })
+            Screen.Logs -> LogScreen(onBack = { screen = Screen.Dashboard })
+        }
     }
 }
 
@@ -254,7 +279,7 @@ private fun DashboardScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            StatusCard(snapshot, activeProfile)
+            StatusCard(snapshot, activeProfile, onOpenLogs = onOpenLogs)
             ProfileSummaryCard(
                 profile = activeProfile,
                 locked = running,
@@ -269,6 +294,7 @@ private fun DashboardScreen(
             ActionRow(
                 busy = busy,
                 running = running,
+                stopping = snapshot.state == RuntimeState.Stopping,
                 onConnect = {
                     if (
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -297,27 +323,59 @@ private fun DashboardScreen(
 }
 
 @Composable
-private fun StatusCard(snapshot: RuntimeSnapshot, profile: XTunnelProfile?) {
-    // 点 1：明确连接状态指示，配状态色
-    val (statusColor, statusText) = when (snapshot.state) {
+private fun StatusCard(
+    snapshot: RuntimeSnapshot,
+    profile: XTunnelProfile?,
+    onOpenLogs: () -> Unit,
+) {
+    // 点 1：明确连接状态指示，配状态色。
+    // UX-R3 第 4 项·动效（codex 预研 B）：1s 轮询下的状态翻转不再硬切——
+    // 状态色 200ms 过渡；中间态（连接中/停止中）状态点呼吸 alpha 0.35↔1，
+    // 终态静态。只动 alpha/颜色，不动布局尺寸。
+    val (targetColor, statusText) = when (snapshot.state) {
         RuntimeState.Ready -> Color(0xFF16A34A) to "运行中"
         RuntimeState.Starting -> Color(0xFFD97706) to "连接中"
         RuntimeState.Stopping -> Color(0xFFD97706) to "停止中"
         RuntimeState.Failed -> Color(0xFFB91C1C) to "已失败"
         RuntimeState.Stopped -> Color(0xFF6B7280) to "已停止"
     }
+    val statusColor by animateColorAsState(
+        targetValue = targetColor,
+        animationSpec = tween(200),
+        label = "statusColor",
+    )
+    val transitional = snapshot.state == RuntimeState.Starting ||
+        snapshot.state == RuntimeState.Stopping
+    val pulse = rememberInfiniteTransition(label = "statusPulse")
+    val dotAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
+        label = "dotAlpha",
+    )
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "●  $statusText",
-                color = statusColor,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "●",
+                    color = statusColor,
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = if (transitional) dotAlpha else 1f
+                    },
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(
+                    text = statusText,
+                    color = statusColor,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = snapshot.detail,
@@ -325,6 +383,13 @@ private fun StatusCard(snapshot: RuntimeSnapshot, profile: XTunnelProfile?) {
             )
             if (snapshot.profileName.isNotBlank()) {
                 Text(text = "配置：${snapshot.profileName}")
+            }
+            // UX-R3 第 4 项·交互（claude 预研 Dashboard-2）：失败态打通
+            // 「看到失败 → 查日志」路径，不用回顶栏找入口。
+            if (snapshot.state == RuntimeState.Failed) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onOpenLogs) { Text("查看日志") }
+                }
             }
         }
     }
@@ -413,6 +478,9 @@ private fun RouteCard(locked: Boolean) {
     var config by remember { mutableStateOf(RouteConfigStore.load(context)) }
     var showRulesEditor by remember { mutableStateOf(false) }
     var showSourceUrlEditor by remember { mutableStateOf(false) }
+    // UX-R3 第 4 项·按钮（codex 预研 C）：GEO 更新是长耗时异步（镜像下载可达
+    // 分钟级），按钮加进行中态防连点、给持续反馈（替代纯 Toast 一闪而过）。
+    var geoUpdating by remember { mutableStateOf(false) }
     val enabled = config.enabled
     // round40：GEO 运行状态（sidecar 运行时轮询 /v1/route/stats）——
     // 「GEO 库是否下载到本地并应用上」的直接可视化，替代黑盒。
@@ -587,35 +655,67 @@ private fun RouteCard(locked: Boolean) {
                 // 两种状态都可点；后台线程执行（镜像下载可达分钟级，不能卡 UI）。
                 OutlinedButton(
                     onClick = {
-                        val runtime = XTunnelRuntimeManager.get(context)
-                        android.widget.Toast.makeText(context, "GEO 更新开始…", android.widget.Toast.LENGTH_SHORT).show()
-                        Thread {
-                            if (locked) {
-                                val rulesOk = runCatching { runtime.reloadRules() }.getOrDefault(false)
-                                val geoOk = runCatching { runtime.updateGeo() }.getOrDefault(false)
-                                android.widget.Toast.makeText(
-                                    context,
-                                    when {
-                                        rulesOk && geoOk -> "已触发更新：GEO 库下载中，稍候看运行状态"
-                                        rulesOk -> "规则已重载；GEO 更新触发失败"
-                                        else -> "更新触发失败，请查看日志"
-                                    },
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
-                            } else {
-                                val ok = runCatching { runtime.updateGeoOffline() }.getOrDefault(false)
-                                android.widget.Toast.makeText(
-                                    context,
-                                    if (ok) "GEO 库已通过加速镜像更新，下次连接生效"
-                                    else "镜像更新失败，请查看日志或连接后重试",
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
+                        if (!geoUpdating) {
+                            val runtime = XTunnelRuntimeManager.get(context)
+                            geoUpdating = true
+                            // UX-R3 顺带修既有隐患：Toast 在无名 daemon 线程构造会抛
+                            // 「Can't create handler inside thread that has not called
+                            // Looper.prepare()」——全部 Toast 改 post 回主线程。
+                            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                            mainHandler.post {
+                                android.widget.Toast.makeText(context, "GEO 更新开始…", android.widget.Toast.LENGTH_SHORT).show()
                             }
-                        }.apply { name = "x-tunnel-geo-offline"; isDaemon = true; start() }
+                            Thread {
+                                try {
+                                    if (locked) {
+                                        val rulesOk = runCatching { runtime.reloadRules() }.getOrDefault(false)
+                                        val geoOk = runCatching { runtime.updateGeo() }.getOrDefault(false)
+                                        mainHandler.post {
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                when {
+                                                    rulesOk && geoOk -> "已触发更新：GEO 库下载中，稍候看运行状态"
+                                                    rulesOk -> "规则已重载；GEO 更新触发失败"
+                                                    else -> "更新触发失败，请查看日志"
+                                                },
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    } else {
+                                        val ok = runCatching { runtime.updateGeoOffline() }.getOrDefault(false)
+                                        mainHandler.post {
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                if (ok) "GEO 库已通过加速镜像更新，下次连接生效"
+                                                else "镜像更新失败，请查看日志或连接后重试",
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    }
+                                } finally {
+                                    // Compose snapshot state 线程安全写：后台完成即复位按钮态。
+                                    geoUpdating = false
+                                }
+                            }.apply { name = "x-tunnel-geo-offline"; isDaemon = true; start() }
+                        }
                     },
+                    enabled = !geoUpdating,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(if (locked) "立即更新规则/GEO 库" else "立即更新 GEO 库（加速镜像直连）")
+                    if (geoUpdating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                    }
+                    Text(
+                        when {
+                            geoUpdating -> "更新中…"
+                            locked -> "立即更新规则/GEO 库"
+                            else -> "立即更新 GEO 库（加速镜像直连）"
+                        },
+                    )
                 }
             }
 
@@ -788,25 +888,36 @@ private fun PerAppScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    PerAppConfigStore.Mode.entries.forEach { mode ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { config = config.copy(mode = mode) }
-                                .padding(vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(modeLabel(mode), fontWeight = FontWeight.Medium)
-                                Text(modeHint(mode), style = MaterialTheme.typography.bodySmall)
+                    // UX-R3 第 4 项·交互（claude 预研 P2）：三互斥模式各挂一个
+                    // Switch 是 radio 语义错用（关不掉、互斥关系不可见）——改 M3
+                    // SingleChoiceSegmentedButtonRow（选中态强、天然互斥）。
+                    // 窄屏防溢出：label 单行不折行。
+                    SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        PerAppConfigStore.Mode.entries.forEachIndexed { index, mode ->
+                            SegmentedButton(
+                                selected = config.mode == mode,
+                                onClick = { config = config.copy(mode = mode) },
+                                enabled = !running.value,
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = PerAppConfigStore.Mode.entries.size,
+                                ),
+                            ) {
+                                Text(
+                                    modeLabel(mode),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 1,
+                                )
                             }
-                            Switch(
-                                checked = config.mode == mode,
-                                onCheckedChange = { if (it) config = config.copy(mode = mode) },
-                            )
                         }
                     }
+                    Text(
+                        modeHint(config.mode),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     if (running.value) {
                         Text(
                             "隧道运行中已锁定；修改需停止后生效，或先停止再改",
@@ -895,7 +1006,7 @@ private fun PerAppScreen(onBack: () -> Unit) {
 }
 
 private fun modeLabel(mode: PerAppConfigStore.Mode): String = when (mode) {
-    PerAppConfigStore.Mode.Off -> "全部应用（默认）"
+    PerAppConfigStore.Mode.Off -> "全部应用"
     PerAppConfigStore.Mode.Allow -> "白名单"
     PerAppConfigStore.Mode.Disallow -> "黑名单"
 }
@@ -962,6 +1073,7 @@ private fun AppRow(
 private fun ActionRow(
     busy: Boolean,
     running: Boolean,
+    stopping: Boolean,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -973,19 +1085,34 @@ private fun ActionRow(
         // 「关闭」点不动的语义合并 bug——关闭按钮被空白 clickable View 覆盖吞点击），
         // 改用 Box + Modifier.clickable 自管理点击，彻底绕开编译期语义合并缺陷。
         // round9 修复：加背景色+圆角，解决夜间模式按钮"隐形"（对比度不足）。
-        val connectBg = if (!busy && !running) MaterialTheme.colorScheme.primary
+        // UX-R3 第 4 项·动效（codex 预研 A + round8 铁律）：按压反馈只用
+        // graphicsLayer 缩放（不进布局、不加语义节点、content lambda 零改动），
+        // 避免重蹈语义合并破坏 clickable 的覆辙。busy 态文案给进行中反馈。
+        val connectSource = remember { MutableInteractionSource() }
+        val connectPressed by connectSource.collectIsPressedAsState()
+        val disconnectSource = remember { MutableInteractionSource() }
+        val disconnectPressed by disconnectSource.collectIsPressedAsState()
+        val connectEnabled = !busy && !running
+        val connectBg = if (connectEnabled) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.surfaceVariant
-        val connectFg = if (!busy && !running) MaterialTheme.colorScheme.onPrimary
+        val connectFg = if (connectEnabled) MaterialTheme.colorScheme.onPrimary
             else MaterialTheme.colorScheme.onSurfaceVariant
         Box(
             modifier = Modifier
                 .weight(1f)
+                .graphicsLayer {
+                    scaleX = if (connectPressed && connectEnabled) 0.97f else 1f
+                    scaleY = if (connectPressed && connectEnabled) 0.97f else 1f
+                }
                 .background(connectBg, RoundedCornerShape(8.dp))
-                .clickable(enabled = !busy && !running) { onConnect() },
+                .clickable(
+                    interactionSource = connectSource,
+                    enabled = connectEnabled,
+                ) { onConnect() },
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "连接",
+                text = if (busy && !stopping) "连接中…" else "连接",
                 modifier = Modifier.padding(vertical = 14.dp),
                 fontWeight = FontWeight.SemiBold,
                 color = connectFg,
@@ -994,12 +1121,16 @@ private fun ActionRow(
         Box(
             modifier = Modifier
                 .weight(1f)
+                .graphicsLayer {
+                    scaleX = if (disconnectPressed) 0.97f else 1f
+                    scaleY = if (disconnectPressed) 0.97f else 1f
+                }
                 .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                .clickable { onDisconnect() },
+                .clickable(interactionSource = disconnectSource) { onDisconnect() },
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "关闭",
+                text = if (stopping) "停止中…" else "关闭",
                 modifier = Modifier.padding(vertical = 14.dp),
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -1047,6 +1178,40 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: "unknown"
     }
+    // UX-R3 第 3 项（东哥 2026-09-14 反馈「检查更新按钮行为不对」）：
+    // 旧行为=点击无条件跳浏览器下载页，不做版本比对。新行为三态：
+    //   无新版 → 提示「已是最新版」；有新版 → 显示版本号+「前往下载」跳浏览器；
+    //   网络失败 → Toast 兜底。GitHub Releases API 经镜像链拉取（见 UpdateChecker）。
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateResult by remember { mutableStateOf<UpdateChecker.Result?>(null) }
+    var showDialog by remember { mutableStateOf(false) }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    fun runUpdateCheck() {
+        if (updateChecking) return
+        updateChecking = true
+        // 网络 IO 禁主线程：后台 daemon 线程 + Handler 回主线程更新状态
+        // （沿用 downloadTo 的裸线程先例；本仓 UI 层无协程/无 OkHttp）。
+        Thread {
+            val latest = UpdateChecker.fetchLatestTag()
+            val result = if (latest == null) {
+                UpdateChecker.Result.CheckFailed
+            } else {
+                UpdateChecker.compare(versionName, latest) ?: UpdateChecker.Result.CheckFailed
+            }
+            mainHandler.post {
+                updateChecking = false
+                updateResult = result
+                if (result is UpdateChecker.Result.CheckFailed) {
+                    android.widget.Toast.makeText(
+                        context, "检查更新失败，请检查网络后重试", android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    showDialog = true
+                }
+            }
+        }.apply { name = "x-tunnel-update-check"; isDaemon = true; start() }
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -1069,16 +1234,67 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
                 Text(text = "核心 PID：$it")
             }
             Spacer(modifier = Modifier.height(8.dp))
-            // 检查更新（东哥 2026-08-30 拍板）：点击跳浏览器打开最新版下载页。
-            // 不做应用内静默下载——debug 轮次靠 CI 出包、正式版靠 GitHub Release，
-            // 浏览器打开 Releases 页让东哥自己挑 APK/AAB，链路最短。
+            // 检查更新（东哥 2026-08-30 拍板「跳浏览器挑 APK，不做静默下载」
+            // + UX-R3 2026-09-14 修正「先比对版本，再决定提示还是跳转」）。
+            // loading 态（codex 预研 C 项）：检查中禁用+转圈，防连点。
             OutlinedButton(
-                onClick = { openReleasesPage(context) },
+                onClick = { runUpdateCheck() },
+                enabled = !updateChecking,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("检查更新")
+                if (updateChecking) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("检查中…")
+                } else {
+                    Text("检查更新")
+                }
             }
         }
+    }
+
+    // 三态结果弹窗（codex 预研 1.4 文案口径，对齐 N3 验收判据）。
+    val result = updateResult
+    if (showDialog && result != null) {
+        val hasNew = result is UpdateChecker.Result.NewerVersion
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("检查更新") },
+            text = {
+                Text(
+                    when (result) {
+                        is UpdateChecker.Result.Latest ->
+                            "已是最新版 v${result.currentVersion}"
+                        is UpdateChecker.Result.NewerVersion ->
+                            "发现新版本 ${result.latestVersion}（当前 v${result.currentVersion}）"
+                        UpdateChecker.Result.CheckFailed ->
+                            "检查更新失败，请检查网络后重试"
+                    },
+                )
+            },
+            confirmButton = {
+                if (hasNew) {
+                    // 「前往下载」跳浏览器 Releases 页（复用 openReleasesPage，
+                    // 含无浏览器 Toast 兜底——东哥 8-30 拍板链路不变）。
+                    TextButton(onClick = {
+                        showDialog = false
+                        openReleasesPage(context)
+                    }) { Text("前往下载") }
+                } else {
+                    TextButton(onClick = { showDialog = false }) { Text("确定") }
+                }
+            },
+            dismissButton = if (hasNew) {
+                @Composable {
+                    TextButton(onClick = { showDialog = false }) { Text("以后再说") }
+                }
+            } else {
+                null
+            },
+        )
     }
 }
 
@@ -1568,10 +1784,11 @@ private fun LogScreen(onBack: () -> Unit) {
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 16.dp),
                 ) {
+                    // 纯文字 FAB：material-icons-core 不在本仓 classpath
+                    // （material3 不传递 icons），零新增依赖纪律下不加图标。
                     ExtendedFloatingActionButton(
                         onClick = { followTail = true },
                         text = { Text("回到底部") },
-                        icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null) },
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
