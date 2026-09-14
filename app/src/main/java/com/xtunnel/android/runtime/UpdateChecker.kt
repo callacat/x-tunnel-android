@@ -72,8 +72,17 @@ object UpdateChecker {
      */
     fun fetchLatestTag(): String? {
         for (mirror in MIRROR_PREFIXES) {
-            val tag = runCatching { fetchTagVia(mirror + LATEST_RELEASE_URL) }.getOrNull()
+            val outcome = runCatching { fetchTagVia(mirror + LATEST_RELEASE_URL) }
+            val tag = outcome.getOrNull()
             if (!tag.isNullOrBlank()) return tag
+            // 与 downloadTo 先例一致：每次镜像失败记日志，供日志页排查
+            // 「检查更新失败」的具体原因（第二轮审查 P2-4）。
+            LogStore.append(
+                LogStore.Level.Error,
+                "检查更新镜像失败 " + (mirror.ifBlank { "直连" }) +
+                    "：" + (outcome.exceptionOrNull()?.message
+                        ?: outcome.exceptionOrNull()?.javaClass?.simpleName ?: "空响应"),
+            )
         }
         return null
     }

@@ -17,10 +17,15 @@ object LogStore {
     private const val MAX_IN_MEMORY = 500
     private const val LOG_FILE = "x-tunnel.log"
 
-    // UX-R3 第 1 项（东哥 2026-09-14 反馈「日志时间不是手机本地时间」）：
-    // SimpleDateFormat 不显式设 TimeZone 时隐式跟随 JVM 默认时区——模拟器/
-    // 部分设备 persist.sys.timezone 为 GMT 时显示 UTC（v0.2.0 实锤：CT107
-    // 日志 03:17 = CST 11:17，差 8h）。这里显式取系统时区，与手机设置一致。
+    // UX-R3 第 1 项（东哥 2026-09-14 反馈「日志时间不是手机本地时间」）。
+    // 两个根因、两个修复：
+    //   a) 主因=sidecar（Go）行内 UTC 时间戳与 App 行混排（见 normalizeSidecarLine），
+    //      本项修复是观感差 8h 的真正来源；
+    //   b) 次因=App 行格式化时区语义不明——SimpleDateFormat 隐式用 JVM 默认时区，
+    //      设备 persist.sys.timezone=GMT 时（如未调校时区的 redroid 容器）显示即
+    //      UTC，此时显式 getDefault() 也救不回（getDefault 就是 GMT）——N1 验收
+    //      须保证设备时区正确（CT107 已设 Asia/Shanghai）。显式化的价值=语义
+    //      清晰 + 每次 render 刷新跟随运行中时区变更。
     // SimpleDateFormat 非线程安全：append/render 来自多线程（traffic/output/
     // 主线程），用 ThreadLocal 隔离，替代旧的「每行每帧 new」写法（性能 + 正确性）。
     private val timeFormat = object : ThreadLocal<SimpleDateFormat>() {

@@ -28,11 +28,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.ContentTransform
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -166,9 +163,15 @@ private fun RootNav(onThemeChange: (ThemeMode) -> Unit) {
     // 改 150ms 淡入+轻滑过渡（系统动画关闭时 Compose 自动降级为瞬切）。
     AnimatedContent(
         targetState = screen,
+        // togetherWith 扩展在 CI 的 animation 版本下解析异常（receiver
+        // mismatch，第二轮审查修复）→ 显式 ContentTransform 构造。
         transitionSpec = {
-            (fadeIn(tween(150)) + slideInHorizontally(tween(150)) { it / 8 })
-                togetherWith (fadeOut(tween(120)) + slideOutHorizontally(tween(150)) { -it / 8 })
+            ContentTransform(
+                targetContentEnter = fadeIn(tween(150)) +
+                    slideInHorizontally(tween(150)) { it / 8 },
+                initialContentExit = fadeOut(tween(120)) +
+                    slideOutHorizontally(tween(150)) { -it / 8 },
+            )
         },
         label = "screen",
     ) { target ->
@@ -344,15 +347,8 @@ private fun StatusCard(
         animationSpec = tween(200),
         label = "statusColor",
     )
-    val transitional = snapshot.state == RuntimeState.Starting ||
-        snapshot.state == RuntimeState.Stopping
-    val pulse = rememberInfiniteTransition(label = "statusPulse")
-    val dotAlpha by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
-        label = "dotAlpha",
-    )
+    // 状态点呼吸动画（infiniteTransition）在 CI 端类型推断失败且终态空转
+    // 耗电（审查 P2）——本轮移除，保留状态色过渡即可表达「进行中」。
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -364,9 +360,6 @@ private fun StatusCard(
                     text = "●",
                     color = statusColor,
                     style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.graphicsLayer {
-                        alpha = if (transitional) dotAlpha else 1f
-                    },
                 )
                 Spacer(modifier = Modifier.size(8.dp))
                 Text(
@@ -1012,7 +1005,9 @@ private fun modeLabel(mode: PerAppConfigStore.Mode): String = when (mode) {
 }
 
 private fun modeHint(mode: PerAppConfigStore.Mode): String = when (mode) {
-    PerAppConfigStore.Mode.Off -> "所有应用走隧道，与现状一致"
+    // SegmentedButton 窄屏 label 缩短为「全部应用」，「默认」语义移到 hint
+    // （第二轮审查 P2-5）。
+    PerAppConfigStore.Mode.Off -> "所有应用走隧道（默认，与现状一致）"
     PerAppConfigStore.Mode.Allow -> "勾选的应用走隧道，其余直连"
     PerAppConfigStore.Mode.Disallow -> "勾选的应用直连，其余走隧道"
 }
@@ -1202,13 +1197,9 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
             mainHandler.post {
                 updateChecking = false
                 updateResult = result
-                if (result is UpdateChecker.Result.CheckFailed) {
-                    android.widget.Toast.makeText(
-                        context, "检查更新失败，请检查网络后重试", android.widget.Toast.LENGTH_SHORT,
-                    ).show()
-                } else {
-                    showDialog = true
-                }
+                // 全态弹窗（审查 P2：失败态也要「手动打开下载页」兜底，
+                // 窄网环境 api.github.com/镜像全挂但浏览器可达时可自救）。
+                showDialog = true
             }
         }.apply { name = "x-tunnel-update-check"; isDaemon = true; start() }
     }
@@ -1256,38 +1247,42 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
         }
     }
 
-    // 三态结果弹窗（codex 预研 1.4 文案口径，对齐 N3 验收判据）。
+    // 三态结果弹窗（codex 预研 1.4 文案口径，对齐 N3 验收判据；
+    // 第二轮审查 P2 补强：失败态「手动打开下载页」兜底、unknown 不拼 v）。
     val result = updateResult
     if (showDialog && result != null) {
-        val hasNew = result is UpdateChecker.Result.NewerVersion
         AlertDialog(
             onDismissRequest = { showDialog = false },
             title = { Text("检查更新") },
             text = {
                 Text(
                     when (result) {
-                        is UpdateChecker.Result.Latest ->
-                            "已是最新版 ${displayVersion(result.currentVersion)}"
+                        is UpdateChecker.Result.Latest -> {
+                            val ver = displayVersion(result.currentVersion)
+                            if (ver.startsWith("v")) "已是最新版 $ver" else "已是最新版"
+                        }
                         is UpdateChecker.Result.NewerVersion ->
                             "发现新版本 ${result.latestVersion}（当前 ${displayVersion(result.currentVersion)}）"
                         UpdateChecker.Result.CheckFailed ->
-                            "检查更新失败，请检查网络后重试"
+                            "检查更新失败，请检查网络后重试。\n也可以直接打开下载页查看最新版本。"
                     },
                 )
             },
             confirmButton = {
-                if (hasNew) {
-                    // 「前往下载」跳浏览器 Releases 页（复用 openReleasesPage，
-                    // 含无浏览器 Toast 兜底——东哥 8-30 拍板链路不变）。
+                // 有新版/检查失败都给跳浏览器路径（复用 openReleasesPage，
+                // 含无浏览器 Toast 兜底——东哥 8-30 拍板链路不变）。
+                if (result is UpdateChecker.Result.NewerVersion ||
+                    result is UpdateChecker.Result.CheckFailed
+                ) {
                     TextButton(onClick = {
                         showDialog = false
                         openReleasesPage(context)
-                    }) { Text("前往下载") }
+                    }) { Text(if (result is UpdateChecker.Result.NewerVersion) "前往下载" else "打开下载页") }
                 } else {
                     TextButton(onClick = { showDialog = false }) { Text("确定") }
                 }
             },
-            dismissButton = if (hasNew) {
+            dismissButton = if (result is UpdateChecker.Result.NewerVersion) {
                 @Composable {
                     TextButton(onClick = { showDialog = false }) { Text("以后再说") }
                 }
