@@ -24,11 +24,8 @@ object LogStore {
     // SimpleDateFormat 非线程安全：append/render 来自多线程（traffic/output/
     // 主线程），用 ThreadLocal 隔离，替代旧的「每行每帧 new」写法（性能 + 正确性）。
     private val timeFormat = object : ThreadLocal<SimpleDateFormat>() {
-        override fun initialValue(): SimpleDateFormat {
-            val format = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
-            format.timeZone = TimeZone.getDefault()
-            return format
-        }
+        override fun initialValue(): SimpleDateFormat =
+            SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
     }
 
     private val lines = CopyOnWriteArrayList<LogLine>()
@@ -42,8 +39,13 @@ object LogStore {
         fun render(): String =
             "${timeFormatted()} [${level.tag}] $message"
 
-        private fun timeFormatted(): String =
-            timeFormat.get()!!.format(Date(timestampMillis))
+        private fun timeFormatted(): String {
+            val format = timeFormat.get()!!
+            // 每次显式刷新时区（交叉审查 P2：ThreadLocal 创建时固化会错过
+            // 设备换时区；getDefault() 读进程内缓存值，成本可忽略）。
+            format.timeZone = TimeZone.getDefault()
+            return format.format(Date(timestampMillis))
+        }
     }
 
     enum class Level(val tag: String) {
@@ -56,18 +58,24 @@ object LogStore {
     }
 
     // sidecar（Go core）stdout 行首自带时间戳：Go log 默认 LstdFlags 输出
-    // 「2009/01/23 01:23:23」前缀，且 Android 上 Go time.Local 读不到
-    // /etc/localtime 也无 TZ env → 回退 UTC，比 App 设备时区慢 8h（老马预研
-    // 2026-09-14 实锤）。Android 侧 consumeOutput 把行原样透传，App 行（设备
-    // 时区）与 sidecar 行（UTC）双轴交错，观感=sidecar 慢 8h。
+    // 「2009/01/23 01:23:23」斜杠日期前缀（core v0.5.0 已核实无 SetFlags/slog，
+    // logring 仅透传原始行），且 Android 上 Go time.Local 读不到 /etc/localtime
+    // 也无 TZ env → 回退 UTC，比 App 设备时区慢 8h（老马预研 2026-09-14 实锤）。
+    // consumeOutput 原样透传时，App 行（设备时区）与 sidecar 行（UTC）双轴交错，
+    // 观感=sidecar 慢 8h。
     //
     // 归一（UX-R3 第 1 项）：识别已知前缀格式，剥掉行内时间戳，改用
-    // App 统一时间轴（LogLine 自带 timestampMillis + 设备时区 render）：
-    //   1. Go log 默认/微秒前缀 「2026/09/14 03:17:45(.123456)? message」
-    //   2. 方括号日志前缀       「[2026-09-14 03:17:45] message」（防御性兼容）
+    // App 统一时间轴（LogLine 自带 timestampMillis + 设备时区 render）。
+    // 历史兼容：LogStore 内存缓冲不持久化、UI 不回读旧文件，导出文件为纯文本
+    // 追加——自本版本起新行均为设备时区单时间轴，升级前旧文件行保持原样
+    // （即方案 TASK-2「按新格式从切换点起算」分支）。
+    //   1. Go log 默认/微秒前缀 「2026/09/14 03:17:45(.123456)? message」←主格式
+    //   2. 破折号/RFC3339 变体  「2026-09-14[T ]03:17:45[Z]? message」（换格式兜底）
+    //   3. 方括号日志前缀       「[2026-09-14 03:17:45] message」（防御性兼容）
     // 未识别格式原样保留（内容不丢，仅去掉行首空白）。
     private val SIDECAR_TS_PATTERNS = listOf(
         Regex("""^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?\s"""),
+        Regex("""^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?\s"""),
         Regex("""^\[\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?\]\s?"""),
     )
 

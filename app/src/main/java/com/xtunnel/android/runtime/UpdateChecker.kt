@@ -79,6 +79,8 @@ object UpdateChecker {
     }
 
     private fun fetchTagVia(url: String): String? {
+        // 注意：XTunnelRuntimeManager 文件级 private 的 HttpURLConnection.use
+        // 扩展跨文件不可见（交叉审查实锤），此处用显式 try/finally disconnect。
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 15_000
@@ -87,15 +89,17 @@ object UpdateChecker {
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "x-tunnel-android (update checker)")
         }
-        return conn.use {
-            if (it.responseCode !in 200..299) throw IOException("HTTP ${it.responseCode}")
-            val body = it.inputStream.bufferedReader().use { r -> r.readText() }
+        try {
+            if (conn.responseCode !in 200..299) throw IOException("HTTP ${conn.responseCode}")
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
             val obj = JSONObject(body)
             // 防御：draft/prerelease 不当作「可更新到的最新版」（未公开发布不推给用户）。
             if (obj.optBoolean("draft", false) || obj.optBoolean("prerelease", false)) {
                 throw IOException("latest is draft/prerelease")
             }
-            obj.optString("tag_name").takeIf { t -> t.isNotBlank() }
+            return obj.optString("tag_name").takeIf { it.isNotBlank() }
+        } finally {
+            conn.disconnect()
         }
     }
 }

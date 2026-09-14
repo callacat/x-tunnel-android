@@ -29,10 +29,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateColorAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.togetherWith
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1267,9 +1267,9 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
                 Text(
                     when (result) {
                         is UpdateChecker.Result.Latest ->
-                            "已是最新版 v${result.currentVersion}"
+                            "已是最新版 ${displayVersion(result.currentVersion)}"
                         is UpdateChecker.Result.NewerVersion ->
-                            "发现新版本 ${result.latestVersion}（当前 v${result.currentVersion}）"
+                            "发现新版本 ${result.latestVersion}（当前 ${displayVersion(result.currentVersion)}）"
                         UpdateChecker.Result.CheckFailed ->
                             "检查更新失败，请检查网络后重试"
                     },
@@ -1302,6 +1302,11 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
 // （302 到最新正式版 tag 页）。正式版发布在 callacat/x-tunnel-android，
 // 与 CI release.yml 上传产物同一个仓库。
 private const val DOWNLOAD_PAGE_URL = "https://github.com/callacat/x-tunnel-android/releases/latest"
+
+// displayVersion：统一版本写法——数字开头才加 v 前缀；「unknown」等
+// 兜底串原样显示（交叉审查 P2：避免「vunknown」文案）。
+private fun displayVersion(version: String): String =
+    if (version.firstOrNull()?.isDigit() == true) "v$version" else version
 
 // openReleasesPage 用系统浏览器打开下载页；设备无浏览器（罕见，如纯系统镜像）
 // 时 Toast 兜底，不让点击无响应。
@@ -1742,7 +1747,7 @@ private fun LogScreen(onBack: () -> Unit) {
     ) { contentPadding ->
         // UX-R3 第 4 项（布局/交互）：旧实现 Column+verticalScroll 全量渲染 500 条
         // 且每行每帧 new SimpleDateFormat（预研 P0 性能硬伤）——改 LazyColumn+
-        // items(key)+行内复用 LogLine.render()（内部 ThreadLocal formatter）。
+        // itemsIndexed 惰性渲染 + LogLine.render() 复用 ThreadLocal formatter。
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1784,14 +1789,16 @@ private fun LogScreen(onBack: () -> Unit) {
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 16.dp),
                 ) {
-                    // 纯文字 FAB：material-icons-core 不在本仓 classpath
-                    // （material3 不传递 icons），零新增依赖纪律下不加图标。
+                    // 纯文字 FAB（content lambda 重载）：material-icons-core 不在
+                    // 本仓 classpath，且 material3 的 text=/icon= 重载要求成对传
+                    // icon（CI 实锤 None of the following candidates）。
                     ExtendedFloatingActionButton(
                         onClick = { followTail = true },
-                        text = { Text("回到底部") },
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
+                    ) {
+                        Text("回到底部")
+                    }
                 }
             }
         }
