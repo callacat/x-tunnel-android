@@ -48,6 +48,12 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # 2026-09-15 CI 红修：runner 镜像 cmdline-tools 20.0 已移除 'tools'
+          # 包，action 默认 packages='tools platform-tools' 报 Failed to find
+          # package 'tools' 退出码 1。本仓实际只用 platforms/build-tools/ndk
+          # （下一步显式安装），platform-tools 保留兜底 adb。
+          packages: platform-tools
 
       - name: Install Android packages
         run: sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK}"
