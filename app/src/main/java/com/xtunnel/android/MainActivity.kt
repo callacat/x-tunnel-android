@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.animation.AnimatedContent
@@ -46,6 +48,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -312,9 +315,9 @@ private fun DashboardScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .padding(16.dp)
+                .padding(XTunnelSpacing.LG)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.MD),
         ) {
             StatusCard(snapshot, activeProfile, onOpenLogs = onOpenLogs)
             ProfileSummaryCard(
@@ -384,27 +387,32 @@ private fun StatusCard(
     )
     // 状态点呼吸动画（infiniteTransition）在 CI 端类型推断失败且终态空转
     // 耗电（审查 P2）——本轮移除，保留状态色过渡即可表达「进行中」。
+    // 层级：状态卡是全局唯一"主卡"，用 surfaceVariant 色调与其余 surface 卡
+    // 区分（redesign：卡片只在需要表达层级时出现差异）；状态点改几何圆点，
+    // 不再依赖字体字形「●」（跨设备字号/基线不可控）。
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier.padding(XTunnelSpacing.LG),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "●",
-                    color = statusColor,
-                    style = MaterialTheme.typography.headlineSmall,
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .background(statusColor, CircleShape),
                 )
-                Spacer(modifier = Modifier.size(8.dp))
+                Spacer(modifier = Modifier.size(XTunnelSpacing.SM))
                 Text(
                     text = statusText,
                     color = statusColor,
                     style = MaterialTheme.typography.headlineSmall,
+                    // 主卡状态字保留全页唯一一处半粗强调（字重限 2-3 档）。
                     fontWeight = FontWeight.SemiBold,
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = snapshot.detail,
                 style = MaterialTheme.typography.bodyMedium,
@@ -422,7 +430,11 @@ private fun StatusCard(
                 )
             }
             if (snapshot.profileName.isNotBlank()) {
-                Text(text = "配置：${snapshot.profileName}")
+                Text(
+                    text = "配置：${snapshot.profileName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             // UX-R3 第 4 项·交互（claude 预研 Dashboard-2）：失败态打通
             // 「看到失败 → 查日志」路径，不用回顶栏找入口。
@@ -443,23 +455,29 @@ private fun ProfileSummaryCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(XTunnelSpacing.LG),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
         ) {
             Text(
                 text = "当前配置",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
             )
             if (profile == null) {
-                Text("尚未配置服务器，请在「配置」页添加", color = MaterialTheme.colorScheme.error)
+                Text(
+                    "尚未配置服务器，请在「配置」页添加",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             } else {
-                Text("名称：${profile.name}")
-                Text("服务器：${profile.serverUrl.ifBlank { "（未填写）" }}")
+                Text("名称：${profile.name}", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "服务器：${profile.serverUrl.ifBlank { "（未填写）" }}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (locked) {
                     Text("运行中已锁定配置，停止后可编辑", style = MaterialTheme.typography.bodySmall)
                 }
@@ -482,22 +500,20 @@ private fun PerAppCard(
     val config = remember { PerAppConfigStore.load(context) }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(XTunnelSpacing.LG),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
         ) {
             Text(
                 text = "分应用代理",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
             )
             if (profile == null) {
-                Text("请先在「配置」页添加并选择一个服务器配置")
+                Text("请先在「配置」页添加并选择一个服务器配置", style = MaterialTheme.typography.bodyMedium)
             } else {
-                Text(PerAppConfigStore.describe(config))
+                Text(PerAppConfigStore.describe(config), style = MaterialTheme.typography.bodyMedium)
                 if (locked) {
                     Text("运行中已锁定，停止后可调整；修改后需重启连接生效", style = MaterialTheme.typography.bodySmall)
                 }
@@ -533,10 +549,12 @@ private fun RouteCard(locked: Boolean) {
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            modifier = Modifier.padding(XTunnelSpacing.LG),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -546,7 +564,6 @@ private fun RouteCard(locked: Boolean) {
                     Text(
                         "GEO 分流",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         if (enabled) "已开启：境内直连、境外走隧道、广告拦截"
@@ -672,10 +689,12 @@ private fun RouteCard(locked: Boolean) {
                 if (config.autoUpdate) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
                     ) {
                         RouteConfigStore.UpdateFrequency.entries.forEach { freq ->
                             FilterChip(
+                                // chip 视觉高 32dp，补足 48dp 最小触控目标（WCAG/契约判据 2）。
+                                modifier = Modifier.minimumInteractiveComponentSize(),
                                 selected = config.updateFrequency == freq,
                                 onClick = {
                                     config = config.copy(updateFrequency = freq)
@@ -747,7 +766,7 @@ private fun RouteCard(locked: Boolean) {
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
                         )
-                        Spacer(modifier = Modifier.size(8.dp))
+                        Spacer(modifier = Modifier.size(XTunnelSpacing.SM))
                     }
                     Text(
                         when {
@@ -1121,7 +1140,7 @@ private fun ActionRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(XTunnelSpacing.MD),
     ) {
         // round8d 修复：放弃 Material3 Button/OutlinedButton（CT107 实测「连接」能点
         // 「关闭」点不动的语义合并 bug——关闭按钮被空白 clickable View 覆盖吞点击），
@@ -1130,6 +1149,9 @@ private fun ActionRow(
         // UX-R3 第 4 项·动效（codex 预研 A + round8 铁律）：按压反馈只用
         // graphicsLayer 缩放（不进布局、不加语义节点、content lambda 零改动），
         // 避免重蹈语义合并破坏 clickable 的覆辙。busy 态文案给进行中反馈。
+        // UI 美化：形状对齐卡片中圆角（shapes.medium）；禁用态按 M3 标准
+        // onSurface α=0.38（原 100% onSurfaceVariant 看着像可点，Missing States）；
+        // 垂直内边距上 4dp 网格（LG=16，含文字 ≥48dp 触控高）。
         val connectSource = remember { MutableInteractionSource() }
         val connectPressed by connectSource.collectIsPressedAsState()
         val disconnectSource = remember { MutableInteractionSource() }
@@ -1138,15 +1160,16 @@ private fun ActionRow(
         val connectBg = if (connectEnabled) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.surfaceVariant
         val connectFg = if (connectEnabled) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         Box(
             modifier = Modifier
                 .weight(1f)
+                .heightIn(min = 48.dp)
                 .graphicsLayer {
                     scaleX = if (connectPressed && connectEnabled) 0.97f else 1f
                     scaleY = if (connectPressed && connectEnabled) 0.97f else 1f
                 }
-                .background(connectBg, RoundedCornerShape(8.dp))
+                .background(connectBg, MaterialTheme.shapes.medium)
                 .clickable(
                     interactionSource = connectSource,
                     enabled = connectEnabled,
@@ -1155,7 +1178,7 @@ private fun ActionRow(
         ) {
             Text(
                 text = if (busy && !stopping) "连接中…" else "连接",
-                modifier = Modifier.padding(vertical = 14.dp),
+                modifier = Modifier.padding(vertical = XTunnelSpacing.LG),
                 fontWeight = FontWeight.SemiBold,
                 color = connectFg,
             )
@@ -1163,17 +1186,18 @@ private fun ActionRow(
         Box(
             modifier = Modifier
                 .weight(1f)
+                .heightIn(min = 48.dp)
                 .graphicsLayer {
                     scaleX = if (disconnectPressed) 0.97f else 1f
                     scaleY = if (disconnectPressed) 0.97f else 1f
                 }
-                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
                 .clickable(interactionSource = disconnectSource) { onDisconnect() },
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = if (stopping) "停止中…" else "关闭",
-                modifier = Modifier.padding(vertical = 14.dp),
+                modifier = Modifier.padding(vertical = XTunnelSpacing.LG),
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -1183,29 +1207,36 @@ private fun ActionRow(
 
 @Composable
 private fun ThemeCard(current: ThemeMode, onThemeChange: (ThemeMode) -> Unit) {
-    // 点 3：跟随系统 / 浅色 / 深色 三档
+    // 点 3：跟随系统 / 浅色 / 深色 三档。
+    // UI 美化：三互斥档原用 3 个 Switch（radio 语义错用——关不掉、互斥不可见；
+    // UX-R3 已在分应用模式修正同类问题）→ 全站统一 SingleChoiceSegmentedButtonRow，
+    // 选中态强、天然互斥；组件规格跨页一致。
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            modifier = Modifier.padding(XTunnelSpacing.LG),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
+        ) {
             Text(
                 text = "主题",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
             )
-            ThemeMode.entries.forEach { mode ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(mode.label)
-                    Switch(
-                        checked = current == mode,
-                        onCheckedChange = { if (it) onThemeChange(mode) },
-                    )
+            SingleChoiceSegmentedButtonRow(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                ThemeMode.entries.forEachIndexed { index, mode ->
+                    SegmentedButton(
+                        selected = current == mode,
+                        onClick = { onThemeChange(mode) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = ThemeMode.entries.size,
+                        ),
+                    ) {
+                        Text(mode.label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    }
                 }
             }
         }
