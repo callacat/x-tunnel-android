@@ -1298,26 +1298,27 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier.padding(XTunnelSpacing.LG),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
+        ) {
             Text(
                 text = "运行时",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
             )
-            Spacer(modifier = Modifier.height(8.dp))
             // 八轮修复·版本号显示（round5 生效）：东哥可确认装的哪一版
-            Text(text = "版本：$versionName")
-            Text(text = "Android API：${Build.VERSION.SDK_INT}")
+            // UI 美化（关于区）：标签-值键值行，值等宽——版本号/端口/PID 是
+            // 运维读数，比例数字会串列不齐（typography 审查「数字等宽」项）。
+            InfoRow("版本", versionName)
+            InfoRow("Android API", Build.VERSION.SDK_INT.toString())
             if (snapshot.controlUrl.isNotBlank()) {
-                Text(text = "控制端口：${snapshot.controlUrl}")
+                InfoRow("控制端口", snapshot.controlUrl)
             }
             snapshot.pid?.let {
-                Text(text = "核心 PID：$it")
+                InfoRow("核心 PID", it.toString())
             }
-            Spacer(modifier = Modifier.height(8.dp))
             // 检查更新（东哥 2026-08-30 拍板「跳浏览器挑 APK，不做静默下载」
             // + UX-R3 2026-09-14 修正「先比对版本，再决定提示还是跳转」）。
             // loading 态（codex 预研 C 项）：检查中禁用+转圈，防连点。
@@ -1331,7 +1332,7 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
                     )
-                    Spacer(modifier = Modifier.size(8.dp))
+                    Spacer(modifier = Modifier.size(XTunnelSpacing.SM))
                     Text("检查中…")
                 } else {
                     Text("检查更新")
@@ -1339,6 +1340,8 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
             }
         }
     }
+
+    // （更新结果弹窗在下方 if(showDialog) 分支，逻辑不变）
 
     // 三态结果弹窗（codex 预研 1.4 文案口径，对齐 N3 验收判据；
     // 第二轮审查 P2 补强：失败态「手动打开下载页」兜底、unknown 不拼 v）。
@@ -1382,6 +1385,30 @@ private fun RuntimeCard(snapshot: RuntimeSnapshot) {
             } else {
                 null
             },
+        )
+    }
+}
+
+// 信息卡键值行（UI 美化·关于区组件）：标签次要色定宽、值等宽，
+// 读数跨行对齐；96dp 容纳最长标签「Android API」不折行。
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier.width(96.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = FontFamily.Monospace,
+            ),
         )
     }
 }
@@ -1924,7 +1951,7 @@ private fun LogScreen(onBack: () -> Unit) {
                     exit = fadeOut() + slideOutVertically { it / 2 },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 16.dp),
+                        .padding(bottom = XTunnelSpacing.LG),
                 ) {
                     // 纯文字 FAB（content lambda 重载）：material-icons-core 不在
                     // 本仓 classpath，且 material3 的 text=/icon= 重载要求成对传
