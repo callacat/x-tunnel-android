@@ -75,6 +75,18 @@ The Android `versionName` and `versionCode` are derived from the release tag dur
 > 禁止行为：在 `app/build.gradle.kts` 里手写 `orElse("0.1.0-round<N>")` 硬编码轮次。
 > 正确做法：本地手动构建不传 env 时用 `0.1.0-dev`；发布一律走 CI（自增或 tag）。
 
+### UI 截图流水线（ui-screenshots.yml，recvvih6G8BCvC 引入）
+
+`task/**` 推送或 workflow_dispatch 触发：构建 debug APK（同款 round 自增），
+在 API 35 x86_64 模拟器上截取亮/暗 × 四页共 9 图，artifact `ui-screenshots`。
+依赖 debug 构建专用 intent 钩子（release 无效）：
+
+```bash
+adb shell am start -n com.xtunnel.android.debug/com.xtunnel.android.MainActivity \
+  --es debug_theme dark --es debug_screen Logs
+# debug_screen ∈ Dashboard|Profiles|PerApp|Logs；debug_theme ∈ light|dark
+```
+
 Required repository secrets:
 
 - `ANDROID_KEYSTORE_BASE64`

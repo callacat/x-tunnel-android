@@ -1,0 +1,226 @@
+name: UI Screenshots
+
+# 目的：每次 task/** 推送或手动触发时，构建 debug APK 并在模拟器上
+# 按「主题 × 页面」矩阵截取 9 张 UI 截图，产物供 UI 走查/验收。
+# 触发方式刻意收窄（不挂 main / pull_request），避免拖慢主 CI。
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'task/**'
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: "21"
+  GO_VERSION: "1.25.5"
+  ANDROID_API: "36"
+  ANDROID_BUILD_TOOLS: "36.0.0"
+  ANDROID_NDK: "27.0.12077973"
+  # 内核锚定：与 ci.yml 保持同源（callacat/x-tunnel 正式 tag），升级时同步改。
+  CORE_REF: v0.5.0
+
+jobs:
+  # ── job1：构建 debug APK ─────────────────────────────────────────────
+  # 与 ci.yml 的 build job 同款环境与步骤，但只跑 assembleDebug：
+  # 截图不需要 lint/release/bundle，砍掉可省一半以上构建时间。
+  build-debug:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      # 把版本号传给 job2，下载 artifact 时按名精确匹配。
+      version_name: ${{ steps.version.outputs.name }}
+    steps:
+      - name: Checkout Android client
+        uses: actions/checkout@v6
+        with:
+          # 版本号自动递增需要完整提交历史（git rev-list --count HEAD），
+          # 浅克隆会让 round 号恒为 1（与 ci.yml 同因）。
+          fetch-depth: 0
+
+      - name: Checkout x-tunnel core
+        uses: actions/checkout@v6
+        with:
+          repository: callacat/x-tunnel
+          ref: ${{ env.CORE_REF }}
+          path: external/x-tunnel
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          # 同 ci.yml 2026-09-15 红修：cmdline-tools 20.0 移除了 'tools' 包，
+          # action 默认 packages 会失败；本仓显式装所需包（见下一步）。
+          packages: platform-tools
+
+      - name: Install Android packages
+        run: sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK}"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: external/x-tunnel/go.sum
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 调试版递增纪律（东哥 2026-08-29 拍板）：round N = git 提交总数，
+      # 每次 push 自动 +1；文件名/versionName/首页显示同一来源（env 注入）。
+      - name: Compute version
+        id: version
+        run: |
+          count=$(git rev-list --count HEAD)
+          name="0.1.0-round${count}"
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "XTUNNEL_ANDROID_VERSION_NAME=${name}" >> "$GITHUB_ENV"
+          echo "XTUNNEL_ANDROID_VERSION_CODE=${count}" >> "$GITHUB_ENV"
+
+      - name: Build native libs (arm64-v8a + x86_64)
+        run: |
+          bash ./scripts/build-hev-android.sh
+          XTUNNEL_CORE_VERSION="${XTUNNEL_CORE_VERSION:-android-dev}" \
+          XTUNNEL_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          bash ./scripts/build-core-android.sh
+
+      # 注意：app 的 abiFilters 含 arm64-v8a 与 x86_64（app/build.gradle.kts），
+      # build-*.sh 默认也编两个 ABI —— 这保证 APK 能装进 x86_64 模拟器。
+      - name: Assemble debug APK
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: x-tunnel-${{ steps.version.outputs.name }}-debug
+          path: app/build/outputs/apk/debug/*.apk
+
+  # ── job2：模拟器截图 ────────────────────────────────────────────────
+  # runner 选型依据（调研于 2026-09-15，证据链接见下）：
+  #   * android-emulator-runner 官方 README 明确推荐 ubuntu-latest（x64），
+  #     比 macOS runner 快 2-3 倍且便宜：
+  #     https://github.com/ReactiveCircus/android-emulator-runner#usage
+  #   * x64 标准 Linux runner 存在 /dev/kvm，但 runner 用户不在 kvm 组，
+  #     需 udev 规则放开权限（GitHub 官方 issue 的现行 workaround）：
+  #     https://github.com/actions/runner-images/issues/8542 （duplicate of #7670，
+  #     #7670 提供 udev 权限 workaround）
+  #   * ARM 托管 runner（ubuntu-24.04/26.04-arm）不提供嵌套 KVM，GitHub 员工
+  #     2026-08 确认且声明"嵌套虚拟化整体未被官方支持"（实践中仅 x64 车队可用，
+  #     故加 udev 步骤 + boot 超时兜底，失败走 debug-info artifact 排查）：
+  #     https://github.com/actions/runner-images/issues/14062
+  #     https://github.com/actions/runner-images/issues/14549
+  #   * GitHub 对 larger runner 硬件加速虚拟化（含 Android）的官方公告：
+  #     https://github.blog/changelog/2023-02-23-hardware-accelerated-android-virtualization-on-actions-windows-and-linux-larger-hosted-runners/
+  #   * 模拟器 Linux KVM 加速要求（Android 官方）：
+  #     https://developer.android.com/studio/run/emulator-acceleration
+  screenshots:
+    name: Emulator screenshots (API 35 x86_64)
+    needs: build-debug
+    runs-on: ubuntu-latest
+    # 整体兜底：冷启动+装镜像+9 张截图正常 ~15 分钟，35 分钟硬顶防挂死。
+    timeout-minutes: 35
+    steps:
+      - name: Download debug APK
+        uses: actions/download-artifact@v7
+        with:
+          name: x-tunnel-${{ needs.build-debug.outputs.version_name }}-debug
+          path: apk
+          merge-multiple: true
+
+      # /dev/kvm 是 root:kvm 0660，runner 用户不在 kvm 组；用 udev 规则把
+      # 设备节点放开到 0666（reactivecircus README 的标准前置步骤）。
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      # API 35 + google_apis + x86_64：CI 标准组合（AER README 的 matrix 示例
+      # 同款 target）。不用 google_apis_playstore（带 Play、更慢且无必要），
+      # 不用 API 34（本仓 targetSdk 36，取新镜像更贴近真实表现）。
+      # 截图钩子契约（主线已实现，见 MainActivity.kt debugExtras）：
+      #   debug_theme=light|dark，debug_screen=Dashboard|Profiles|PerApp|Logs。
+      - name: Run emulator & capture screenshots
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-boot-timeout: 300
+          script: |
+            set -euo pipefail
+            OUT=ui-screenshots
+            mkdir -p "$OUT"
+            PKG=com.xtunnel.android.debug
+            # debug 构建 applicationIdSuffix=".debug"，但 Activity 类名不变。
+            ACT="${PKG}/com.xtunnel.android.MainActivity"
+            APK=$(find apk -name '*.apk' | head -1)
+            test -n "$APK"
+            # -g 预授予全部运行时权限（如 POST_NOTIFICATIONS），
+            # 防止首启权限弹窗污染截图。
+            adb install -r -g "$APK"
+            # 后台收全量 logcat；脚本/模拟器异常终止时文件已含故障前日志。
+            adb logcat -v time > "$OUT/logcat.txt" 2>&1 &
+            LOGCAT_PID=$!
+            nav() {
+              # 每个状态先 force-stop，保证冷启动、状态间零残留。
+              adb shell am force-stop "$PKG"
+              STATUS=$(adb shell am start -W -n "$ACT" \
+                --es debug_theme "$1" --es debug_screen "$2")
+              echo "$STATUS"
+              echo "$STATUS" | grep -q "Status: ok"
+              # 等过渡动画/首帧稳定（钩子契约要求的固定 sleep）。
+              sleep 3
+            }
+            shot() {
+              timeout 60 adb exec-out screencap -p > "$OUT/$1.png"
+              test -s "$OUT/$1.png"
+            }
+            for theme in light dark; do
+              for screen in Dashboard Profiles PerApp Logs; do
+                nav "$theme" "$screen"
+                shot "${theme}_${screen}"
+                if [ "$theme" = dark ] && [ "$screen" = Dashboard ]; then
+                  # 额外一张：Dashboard（dark）上滑到列表底部，
+                  # 覆盖「关于/运行时卡片」区域；屏幕 1080x2400 中列坐标。
+                  timeout 30 adb shell input swipe 540 1400 540 400 300
+                  sleep 1
+                  shot dark_Dashboard_scrolled
+                fi
+              done
+            done
+            kill "$LOGCAT_PID" 2>/dev/null || true
+            ls -l "$OUT"
+            N=$(find "$OUT" -name '*.png' | wc -l)
+            test "$N" -eq 9 || { echo "expect 9 png, got $N"; exit 1; }
+
+      # 成功交付：9 张 png 一张不缺（缺则 if-no-files-found 不足以拦截，
+      # 脚本尾部已断言数量；这里 error 兜底空目录）。
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-screenshots
+          path: ui-screenshots/*.png
+          if-no-files-found: error
+          retention-days: 14
+
+      # 失败排查包：partial png + logcat（模拟器已被 action 拆掉，
+      # 事后 adb 不可达，所以必须在脚本运行期间收集 logcat）。
+      - name: Upload failure debug info
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-screenshots-debug-info
+          path: ui-screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
