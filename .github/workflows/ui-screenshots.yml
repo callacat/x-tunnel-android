@@ -157,7 +157,12 @@ jobs:
           profile: pixel_7
           disable-animations: true
           emulator-boot-timeout: 300
+          # ⚠ CI run 34980086293 实锤：android-emulator-runner 的 script 由
+          # /usr/bin/sh（dash）执行，dash 不支持 set -o pipefail
+          # （"Illegal option -o pipefail" → exit 2）。用 quoted heredoc 把
+          # 真实脚本体交给 bash（dash 只透传，不展开 $ 变量）。
           script: |
+            bash <<'UI_SHOTS_BASH'
             set -euo pipefail
             OUT=ui-screenshots
             mkdir -p "$OUT"
@@ -203,6 +208,7 @@ jobs:
             ls -l "$OUT"
             N=$(find "$OUT" -name '*.png' | wc -l)
             test "$N" -eq 9 || { echo "expect 9 png, got $N"; exit 1; }
+            UI_SHOTS_BASH
 
       # 成功交付：9 张 png 一张不缺（缺则 if-no-files-found 不足以拦截，
       # 脚本尾部已断言数量；这里 error 兜底空目录）。
