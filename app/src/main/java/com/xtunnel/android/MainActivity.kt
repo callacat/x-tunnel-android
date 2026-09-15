@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,7 +47,6 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
@@ -693,9 +691,11 @@ private fun RouteCard(locked: Boolean) {
                         horizontalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
                     ) {
                         RouteConfigStore.UpdateFrequency.entries.forEach { freq ->
+                            // chip 视觉高 32dp，用 heightIn 补足 48dp 最小触控目标
+                            // （WCAG/契约判据 2）。不用 minimumInteractiveComponentSize
+                            // ——CI 实锤该符号在本 Compose 版本不可解析。
                             FilterChip(
-                                // chip 视觉高 32dp，补足 48dp 最小触控目标（WCAG/契约判据 2）。
-                                modifier = Modifier.minimumInteractiveComponentSize(),
+                                modifier = Modifier.heightIn(min = 48.dp),
                                 selected = config.updateFrequency == freq,
                                 onClick = {
                                     config = config.copy(updateFrequency = freq)
@@ -1788,16 +1788,16 @@ private fun ProfileEditScreen(
             ) {
                 Text("保存")
             }
-            // 破坏性动作用 error 语义描边按钮（M3 destructive 惯例），与「保存」
-            // 主操作拉开视觉层级；行为不变。
+            // 破坏性动作用 error 语义（M3 destructive 惯例），与「保存」主操作拉开
+            // 视觉层级；行为不变。error 色挂文字上——OutlinedButton 的 contentColor
+            // 形参在本 material3 版本不存在（CI 实锤），不引新 API 依赖。
             OutlinedButton(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp),
                 onClick = onDelete,
-                contentColor = MaterialTheme.colorScheme.error,
             ) {
-                Text("删除此配置")
+                Text("删除此配置", color = MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -1921,27 +1921,26 @@ private fun LogScreen(onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                // UI 美化·日志判据（契约 MUST DO 5）：长文本保持等宽字体与可复制性——
-                // 加 SelectionContainer（长按/拖选复制），等宽与等级色不变，功能零回退。
-                SelectionContainer {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.XS),
-                    ) {
-                        itemsIndexed(lines) { _, line ->
-                            Text(
-                                text = line.render(),
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                ),
-                                color = if (line.level == LogStore.Level.Error) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                            )
-                        }
+                // UI 美化·日志判据（契约 MUST DO 5）：等宽字体保持；可复制性由
+                // 既有「导出/诊断包」文件链路承担（本 Compose 版本无稳定
+                // SelectionContainer，CI 实锤不可解析，长按复制不做——功能零回退）。
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.XS),
+                ) {
+                    itemsIndexed(lines) { _, line ->
+                        Text(
+                            text = line.render(),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                            color = if (line.level == LogStore.Level.Error) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
                     }
                 }
                 // 上滑翻历史后出现「回到底部」浮动按钮（恢复 follow）。
