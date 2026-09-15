@@ -47,6 +47,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1795,11 +1796,12 @@ private fun LogScreen(onBack: () -> Unit) {
                             context, "诊断包已存：${file.absolutePath}", android.widget.Toast.LENGTH_LONG,
                         ).show()
                     }) { Text("诊断包") }
+                    // UI 美化：不可逆动作给 error 语义色（行为不变，仅显性化危险级）。
                     TextButton(onClick = {
                         LogStore.clear()
                         lines = emptyList()
                         followTail = true
-                    }) { Text("清空") }
+                    }) { Text("清空", color = MaterialTheme.colorScheme.error) }
                     TextButton(onClick = {
                         val file = LogStore.exportFile(context) ?: return@TextButton
                         val uri = FileProvider.getUriForFile(
@@ -1825,32 +1827,37 @@ private fun LogScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = XTunnelSpacing.LG, vertical = XTunnelSpacing.SM),
         ) {
             if (lines.isEmpty()) {
                 Text(
                     "暂无日志",
                     modifier = Modifier.align(Alignment.Center),
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    itemsIndexed(lines) { _, line ->
-                        Text(
-                            text = line.render(),
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace,
-                            ),
-                            color = if (line.level == LogStore.Level.Error) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                        )
+                // UI 美化·日志判据（契约 MUST DO 5）：长文本保持等宽字体与可复制性——
+                // 加 SelectionContainer（长按/拖选复制），等宽与等级色不变，功能零回退。
+                SelectionContainer {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.XS),
+                    ) {
+                        itemsIndexed(lines) { _, line ->
+                            Text(
+                                text = line.render(),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                ),
+                                color = if (line.level == LogStore.Level.Error) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                        }
                     }
                 }
                 // 上滑翻历史后出现「回到底部」浮动按钮（恢复 follow）。
