@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.minimumInteractiveComponentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
@@ -50,7 +51,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -822,7 +822,7 @@ private fun SourceUrlDialog(
         onDismissRequest = onDismiss,
         title = { Text("规则源 URL") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM)) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -858,11 +858,16 @@ private fun CustomRulesDialog(
         onDismissRequest = onDismiss,
         title = { Text("自定义分流规则") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM)) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
                     modifier = Modifier.fillMaxWidth().height(200.dp),
+                    // 规则是 DSL 文本：等宽对齐 + 可选中（与日志页同口径），
+                    // 语法列对齐可读性↑。
+                    textStyle = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                    ),
                     placeholder = { Text("每行一条，格式：行为,条件\n例：proxy,domain:google.com\ndirect,domain:*.example.com\n支持 domain/geosite/geoip 条件") },
                 )
                 Text(
@@ -933,20 +938,21 @@ private fun PerAppScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(XTunnelSpacing.LG),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.MD),
         ) {
             // 模式选择（三档）
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier.padding(XTunnelSpacing.LG),
+                    verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
+                ) {
                     Text(
                         "分应用模式",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
                     )
                     // UX-R3 第 4 项·交互（claude 预研 P2）：三互斥模式各挂一个
                     // Switch 是 radio 语义错用（关不掉、互斥关系不可见）——改 M3
@@ -998,7 +1004,6 @@ private fun PerAppScreen(onBack: () -> Unit) {
                     if (config.mode == PerAppConfigStore.Mode.Allow) "勾选走隧道 / 取消勾选直连的应用"
                     else "勾选直连 / 取消勾选走隧道的应用",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
                 )
                 // round9：搜索框——按应用名/包名实时过滤，清空显示全部。
                 OutlinedTextField(
@@ -1015,7 +1020,7 @@ private fun PerAppScreen(onBack: () -> Unit) {
                 } else {
                     LazyColumn(
                         modifier = Modifier.weight(1f, fill = true),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.XS),
                     ) {
                         // round45：第三方在前、系统应用在后（InstalledApps 已按此排序），
                         // 首次出现处插分组标题行——系统应用可见可勾（东哥 r44 反馈）。
@@ -1024,12 +1029,13 @@ private fun PerAppScreen(onBack: () -> Unit) {
                             if (app.system != lastSystem) {
                                 lastSystem = app.system
                                 item(key = "header-${app.system}", contentType = "header") {
+                                    // 组标题去 ASCII 装饰线（「—— xx ——」靠字符拼视觉
+                                    // 是字形 hack）→ 标准 label 层级。
                                     Text(
-                                        if (app.system) "—— 系统应用 ——"
-                                        else "—— 第三方应用 ——",
-                                        style = MaterialTheme.typography.bodySmall,
+                                        if (app.system) "系统应用" else "第三方应用",
+                                        style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = 6.dp),
+                                        modifier = Modifier.padding(top = XTunnelSpacing.SM),
                                     )
                                 }
                             }
@@ -1088,17 +1094,20 @@ private fun AppRow(
     checked: Boolean,
     onToggle: (Boolean) -> Unit,
 ) {
+    // UI 美化：改 M3 语义 Card(onClick)——旧「Card 外套 clickable」把 ripple
+    // 画在卡片裁剪外（方形角溢出），且无按压高度反馈；Card(onClick) 由 M3
+    // 管裁剪+ripple+按压态，内部 Checkbox 仍各自消费点击（无双触发）。
+    // 形状用 shapes.small（内层元素紧圆角，与 medium 容器卡形成层级）。
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onToggle(!checked) },
-        shape = RoundedCornerShape(8.dp),
+        onClick = { onToggle(!checked) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(XTunnelSpacing.MD),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val bitmap = icon?.let {
@@ -1108,17 +1117,22 @@ private fun AppRow(
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = null,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(XTunnelSpacing.ICON),
                 )
             } else {
-                Spacer(modifier = Modifier.size(40.dp))
+                Spacer(modifier = Modifier.size(XTunnelSpacing.ICON))
             }
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 12.dp),
+                    .padding(horizontal = XTunnelSpacing.MD),
             ) {
-                Text(label, fontWeight = FontWeight.Medium)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
                 Text(
                     packageName,
                     style = MaterialTheme.typography.bodySmall,
@@ -1452,44 +1466,76 @@ private fun ProfileListScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .padding(16.dp)
+                .padding(XTunnelSpacing.LG)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.MD),
         ) {
             if (profiles.isEmpty()) {
-                Text("暂无配置，点击下方「新增配置」添加。默认不内置服务器地址，请自行填写。")
+                // 空状态也要"有话说"：显式字级+次要色（redesign：empty state 是
+                // 被浪费的构图位，不是缺省帧）。
+                Text(
+                    "暂无配置，点击下方「新增配置」添加。默认不内置服务器地址，请自行填写。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else {
                 profiles.forEach { p ->
+                    val isActive = p.name == activeName
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
+                        Column(modifier = Modifier.padding(XTunnelSpacing.LG)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
-                                    text = p.name + if (p.name == activeName) "（当前）" else "",
-                                    fontWeight = FontWeight.SemiBold,
-                                )
+                                // 激活配置：名称+小徽标（tonal chip），替代旧「（当前）」
+                                // 拼字符串——状态一眼可辨，不靠读文案。
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(p.name, style = MaterialTheme.typography.titleMedium)
+                                    if (isActive) {
+                                        Spacer(modifier = Modifier.size(XTunnelSpacing.SM))
+                                        Text(
+                                            "当前",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier
+                                                .background(
+                                                    MaterialTheme.colorScheme.primaryContainer,
+                                                    MaterialTheme.shapes.small,
+                                                )
+                                                .padding(
+                                                    horizontal = XTunnelSpacing.SM,
+                                                    vertical = XTunnelSpacing.XS,
+                                                ),
+                                        )
+                                    }
+                                }
                                 Row {
-                                    TextButton(enabled = !running, onClick = {
+                                    TextButton(enabled = !running && !isActive, onClick = {
                                         activeName = p.name
                                         ProfileStore.saveProfiles(context, profiles, p.name)
                                     }) { Text("启用") }
                                     TextButton(onClick = { editing = p }) { Text("编辑") }
                                 }
                             }
-                            Text("服务器：${p.serverUrl.ifBlank { "（未填写）" }}", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "服务器：${p.serverUrl.ifBlank { "（未填写）" }}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
             }
             if (running) {
-                Text("隧道运行中，配置已锁定不可修改", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "隧道运行中，配置已锁定不可修改",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Button(
                 modifier = Modifier.fillMaxWidth(),
@@ -1524,13 +1570,15 @@ private fun ProfileEditScreen(
             )
         },
     ) { contentPadding ->
+        // 表单垂直节奏：字段间隔 SM=8（M3 text field 自带 label 留白，
+        // 字段间无需更大；节标题仍靠 titleMedium 区分层级）。
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .padding(16.dp)
+                .padding(XTunnelSpacing.LG)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(XTunnelSpacing.SM),
         ) {
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
@@ -1605,7 +1653,7 @@ private fun ProfileEditScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("允许不安全 TLS")
+                Text("允许不安全 TLS", style = MaterialTheme.typography.bodyMedium)
                 Switch(checked = draft.insecure, onCheckedChange = { draft = draft.copy(insecure = it) })
             }
             Row(
@@ -1613,13 +1661,12 @@ private fun ProfileEditScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("使用 TLS 回退")
+                Text("使用 TLS 回退", style = MaterialTheme.typography.bodyMedium)
                 Switch(checked = draft.fallback, onCheckedChange = { draft = draft.copy(fallback = it) })
             }
             Text(
                 text = "抗干扰（高级）",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
             )
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
@@ -1655,14 +1702,13 @@ private fun ProfileEditScreen(
             Text(
                 text = "百度中转（高级）",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("启用百度中转")
+                Text("启用百度中转", style = MaterialTheme.typography.bodyMedium)
                 Switch(checked = draft.baiduRelay, onCheckedChange = { draft = draft.copy(baiduRelay = it) })
             }
             Text(
@@ -1700,18 +1746,29 @@ private fun ProfileEditScreen(
             }
 
             if (error != null) {
-                Text("校验：$error", color = MaterialTheme.colorScheme.error)
+                Text(
+                    "校验：$error",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             Button(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
                 enabled = error == null,
                 onClick = { onSave(draft) },
             ) {
                 Text("保存")
             }
+            // 破坏性动作用 error 语义描边按钮（M3 destructive 惯例），与「保存」
+            // 主操作拉开视觉层级；行为不变。
             OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
                 onClick = onDelete,
+                contentColor = MaterialTheme.colorScheme.error,
             ) {
                 Text("删除此配置")
             }
