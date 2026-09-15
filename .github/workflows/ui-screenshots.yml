@@ -127,6 +127,11 @@ jobs:
     # 整体兜底：冷启动+装镜像+9 张截图正常 ~15 分钟，35 分钟硬顶防挂死。
     timeout-minutes: 35
     steps:
+      # 仅取 scripts/capture-ui-screenshots.sh（AER 按行执行 script，脚本体
+      # 必须独立成文件——run 34981306598 实锤）。
+      - name: Checkout capture script
+        uses: actions/checkout@v6
+
       - name: Download debug APK
         uses: actions/download-artifact@v7
         with:
@@ -157,58 +162,11 @@ jobs:
           profile: pixel_7
           disable-animations: true
           emulator-boot-timeout: 300
-          # ⚠ CI run 34980086293 实锤：android-emulator-runner 的 script 由
-          # /usr/bin/sh（dash）执行，dash 不支持 set -o pipefail
-          # （"Illegal option -o pipefail" → exit 2）。用 quoted heredoc 把
-          # 真实脚本体交给 bash（dash 只透传，不展开 $ 变量）。
-          script: |
-            bash <<'UI_SHOTS_BASH'
-            set -euo pipefail
-            OUT=ui-screenshots
-            mkdir -p "$OUT"
-            PKG=com.xtunnel.android.debug
-            # debug 构建 applicationIdSuffix=".debug"，但 Activity 类名不变。
-            ACT="${PKG}/com.xtunnel.android.MainActivity"
-            APK=$(find apk -name '*.apk' | head -1)
-            test -n "$APK"
-            # -g 预授予全部运行时权限（如 POST_NOTIFICATIONS），
-            # 防止首启权限弹窗污染截图。
-            adb install -r -g "$APK"
-            # 后台收全量 logcat；脚本/模拟器异常终止时文件已含故障前日志。
-            adb logcat -v time > "$OUT/logcat.txt" 2>&1 &
-            LOGCAT_PID=$!
-            nav() {
-              # 每个状态先 force-stop，保证冷启动、状态间零残留。
-              adb shell am force-stop "$PKG"
-              STATUS=$(adb shell am start -W -n "$ACT" \
-                --es debug_theme "$1" --es debug_screen "$2")
-              echo "$STATUS"
-              echo "$STATUS" | grep -q "Status: ok"
-              # 等过渡动画/首帧稳定（钩子契约要求的固定 sleep）。
-              sleep 3
-            }
-            shot() {
-              timeout 60 adb exec-out screencap -p > "$OUT/$1.png"
-              test -s "$OUT/$1.png"
-            }
-            for theme in light dark; do
-              for screen in Dashboard Profiles PerApp Logs; do
-                nav "$theme" "$screen"
-                shot "${theme}_${screen}"
-                if [ "$theme" = dark ] && [ "$screen" = Dashboard ]; then
-                  # 额外一张：Dashboard（dark）上滑到列表底部，
-                  # 覆盖「关于/运行时卡片」区域；屏幕 1080x2400 中列坐标。
-                  timeout 30 adb shell input swipe 540 1400 540 400 300
-                  sleep 1
-                  shot dark_Dashboard_scrolled
-                fi
-              done
-            done
-            kill "$LOGCAT_PID" 2>/dev/null || true
-            ls -l "$OUT"
-            N=$(find "$OUT" -name '*.png' | wc -l)
-            test "$N" -eq 9 || { echo "expect 9 png, got $N"; exit 1; }
-            UI_SHOTS_BASH
+          # ⚠ CI run 34980086293/34981306598 实锤：android-emulator-runner 把
+          # script 按【行】逐条交 /usr/bin/sh（dash）执行——多行 heredoc、跨行
+          # 状态、set -o pipefail 全部失效。脚本体收进 scripts/capture-ui-screenshots.sh
+          # （bash shebang），AER 只跑这一行。
+          script: bash scripts/capture-ui-screenshots.sh
 
       # 成功交付：9 张 png 一张不缺（缺则 if-no-files-found 不足以拦截，
       # 脚本尾部已断言数量；这里 error 兜底空目录）。
