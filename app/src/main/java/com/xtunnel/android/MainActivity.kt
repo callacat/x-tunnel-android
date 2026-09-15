@@ -107,6 +107,7 @@ import com.xtunnel.android.runtime.RuntimeSnapshot
 import com.xtunnel.android.runtime.RuntimeState
 import com.xtunnel.android.runtime.RuntimeStateStore
 import com.xtunnel.android.runtime.UpdateChecker
+import com.xtunnel.android.runtime.VpnDataPathState
 import com.xtunnel.android.runtime.XTunnelRuntimeManager
 import com.xtunnel.android.service.XTunnelVpnService
 import kotlinx.coroutines.delay
@@ -374,6 +375,18 @@ private fun StatusCard(
                 text = snapshot.detail,
                 style = MaterialTheme.typography.bodyMedium,
             )
+            // UX-R3·N-new 可观测性：sidecar 就绪但数据面 Failed 时，此前 UI
+            // 仍显示「运行中」（state=Ready 只看 sidecar），数据面故障被完全
+            // 掩盖、现场无排查线索（真机三测 BLOCKER 的放大器）。显式呈现。
+            if (snapshot.dataPathState != VpnDataPathState.Running &&
+                snapshot.dataPathState != VpnDataPathState.NotStarted
+            ) {
+                Text(
+                    text = "数据面：${snapshot.dataPathState.label}（${snapshot.dataPathDetail}）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             if (snapshot.profileName.isNotBlank()) {
                 Text(text = "配置：${snapshot.profileName}")
             }

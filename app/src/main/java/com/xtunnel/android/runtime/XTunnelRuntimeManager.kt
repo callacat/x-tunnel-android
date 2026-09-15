@@ -195,7 +195,22 @@ class XTunnelRuntimeManager private constructor(context: Context) {
                 dataPathDetail = dataPathResult.detail,
             ),
         )
-        LogStore.append(LogStore.Level.Info, "隧道就绪 pid=${ready.pid} 数据面=${dataPathResult.state.name}")
+        // UX-R3·N-new 可观测性：数据面 Failed 时此前只有状态枚举名进日志、
+        // 异常 detail 只在内存 UI 不可见——真机三测「数据面=Failed」无从排查的
+        // 根因。失败态按 Error 记录并带上 detail。
+        val dataPathLevel = if (dataPathResult.state == VpnDataPathState.Failed ||
+            dataPathResult.state == VpnDataPathState.MissingTun2Socks
+        ) {
+            LogStore.Level.Error
+        } else {
+            LogStore.Level.Info
+        }
+        LogStore.append(dataPathLevel, "隧道就绪 pid=${ready.pid} 数据面=${dataPathResult.state.name}")
+        if (dataPathResult.state != VpnDataPathState.Running &&
+            dataPathResult.detail.isNotBlank()
+        ) {
+            LogStore.append(dataPathLevel, "数据面详情：${dataPathResult.detail}")
+        }
         startTrafficMonitor(ready.controlUrl, bearer)
     }
 
