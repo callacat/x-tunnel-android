@@ -69,9 +69,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,7 +78,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -96,8 +94,13 @@ import com.xtunnel.android.model.DefaultProfile
 import com.xtunnel.android.model.InstalledApps
 import com.xtunnel.android.model.PerAppConfigStore
 import com.xtunnel.android.model.RouteConfigStore
+import com.xtunnel.android.model.LocalStatusColors
 import com.xtunnel.android.model.ThemeMode
 import com.xtunnel.android.model.ThemePrefs
+import com.xtunnel.android.model.XTunnelSpacing
+import com.xtunnel.android.model.XTunnelTheme
+import com.xtunnel.android.model.darkColors
+import com.xtunnel.android.model.lightColors
 import com.xtunnel.android.model.ProfileStore
 import com.xtunnel.android.model.XTunnelProfile
 import com.xtunnel.android.model.validationError
@@ -154,23 +157,26 @@ private fun XTunnelApp() {
             },
         )
     }
-    val colorScheme = when (themeMode) {
+    val colorSet = when (themeMode) {
         ThemeMode.System -> if (androidx.compose.foundation.isSystemInDarkTheme()) darkColors() else lightColors()
         ThemeMode.Light -> lightColors()
         ThemeMode.Dark -> darkColors()
     }
-    MaterialTheme(colorScheme = colorScheme) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background,
-        ) {
-            RootNav(
-                initialScreen = debugScreen(debugBundle),
-                onThemeChange = { mode ->
-                    themeMode = mode
-                    ThemePrefs.save(context, mode)
-                },
-            )
+    // 调色板与状态色成对下发（model/XTunnelTheme.kt 单源，page 文件零硬编码色）。
+    CompositionLocalProvider(LocalStatusColors provides colorSet.status) {
+        MaterialTheme(colorScheme = colorSet.scheme) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                RootNav(
+                    initialScreen = debugScreen(debugBundle),
+                    onThemeChange = { mode ->
+                        themeMode = mode
+                        ThemePrefs.save(context, mode)
+                    },
+                )
+            }
         }
     }
 }
@@ -363,12 +369,13 @@ private fun StatusCard(
     // UX-R3 第 4 项·动效（codex 预研 B）：1s 轮询下的状态翻转不再硬切——
     // 状态色 200ms 过渡；中间态（连接中/停止中）状态点呼吸 alpha 0.35↔1，
     // 终态静态。只动 alpha/颜色，不动布局尺寸。
+    val statusColors = XTunnelTheme.statusColors
     val (targetColor, statusText) = when (snapshot.state) {
-        RuntimeState.Ready -> Color(0xFF16A34A) to "运行中"
-        RuntimeState.Starting -> Color(0xFFD97706) to "连接中"
-        RuntimeState.Stopping -> Color(0xFFD97706) to "停止中"
-        RuntimeState.Failed -> Color(0xFFB91C1C) to "已失败"
-        RuntimeState.Stopped -> Color(0xFF6B7280) to "已停止"
+        RuntimeState.Ready -> statusColors.running to "运行中"
+        RuntimeState.Starting -> statusColors.pending to "连接中"
+        RuntimeState.Stopping -> statusColors.pending to "停止中"
+        RuntimeState.Failed -> MaterialTheme.colorScheme.error to "已失败"
+        RuntimeState.Stopped -> statusColors.stopped to "已停止"
     }
     val statusColor by animateColorAsState(
         targetValue = targetColor,
@@ -1840,39 +1847,6 @@ private fun LogScreen(onBack: () -> Unit) {
     }
 }
 
-// 点 3：深色配色方案
-private fun darkColors() = darkColorScheme(
-    primary = Color(0xFF38BDF8),
-    onPrimary = Color(0xFF0F172A),
-    secondary = Color(0xFF94A3B8),
-    onSecondary = Color(0xFF0F172A),
-    background = Color(0xFF0F172A),
-    onBackground = Color(0xFFF1F5F9),
-    surface = Color(0xFF1E293B),
-    onSurface = Color(0xFFF1F5F9),
-    surfaceVariant = Color(0xFF334155),
-    onSurfaceVariant = Color(0xFFCBD5E1),
-    outline = Color(0xFF64748B),
-    error = Color(0xFFF87171),
-    onError = Color(0xFF0F172A),
-)
-
-// 点 3：浅色配色方案（从原 XTunnelColorScheme 迁移）
-private fun lightColors() = lightColorScheme(
-    primary = Color(0xFF155E75),
-    onPrimary = Color.White,
-    secondary = Color(0xFF4B5563),
-    onSecondary = Color.White,
-    background = Color(0xFFF8FAFC),
-    onBackground = Color(0xFF111827),
-    surface = Color.White,
-    onSurface = Color(0xFF111827),
-    surfaceVariant = Color(0xFFE5E7EB),
-    onSurfaceVariant = Color(0xFF374151),
-    outline = Color(0xFF94A3B8),
-    error = Color(0xFFB91C1C),
-    onError = Color.White,
-)
 // ===== 百度中转：请求头 Map <-> 「每行 名称: 值」编辑文本 =====
 
 private fun baiduHeadersToText(headers: Map<String, String>): String =
