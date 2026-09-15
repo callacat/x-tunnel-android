@@ -28,10 +28,11 @@
   - 连接状态页：状态点改几何圆点；状态卡 tonal 层级；主题三档由
     Switch 列表改 `SingleChoiceSegmentedButtonRow`（与分应用页统一）；
     连接/关闭按钮禁用态 α=0.38、高度 ≥48dp、形状对齐卡片。
-  - 日志页：`SelectionContainer` 长按可选复制；「清空」destructive 语义色。
+  - 日志页：「清空」destructive 语义色；等宽字体/尾部跟随/导出链路保持不变
+    （长按复制未做——本 Compose 版本无稳定 `SelectionContainer`，CI 实锤）。
   - 配置页：激活配置「当前」tonal 徽标；AppRow 改 `Card(onClick)`
     （ripple 正确裁剪+按压层级）；组标题去 ASCII 装饰线；
-    删除配置改 error 描边；规则编辑器等宽字体。
+    「删除此配置」文字 error 语义色；规则编辑器等宽字体。
   - 关于卡（运行时）：新增 `InfoRow` 键值行，数值等宽对齐。
 - 卡片圆角统一 `shapes.medium`（12dp）、列表行 `shapes.small`（8dp）。
 
