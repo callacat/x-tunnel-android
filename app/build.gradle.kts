@@ -62,6 +62,11 @@ android {
         }
     }
 
+    buildFeatures {
+        // BuildConfig.DEBUG：CI 截图钩子（ui-screenshots.yml）的门禁。
+        buildConfig = true
+    }
+
     packaging {
         jniLibs {
             useLegacyPackaging = true

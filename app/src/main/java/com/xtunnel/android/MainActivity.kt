@@ -129,10 +129,31 @@ private enum class Screen {
     Logs,
 }
 
+// ===== CI 截图导航钩子（recvvih6G8BCvC UI 美化）=====
+// debug 构建专用 intent extras：debug_theme=light|dark 强制主题、
+// debug_screen=Dashboard|Profiles|PerApp|Logs 直达页面。
+// BuildConfig.DEBUG 门禁：用户构建（release）完全无效，不改信息架构。
+private fun debugExtras(context: android.content.Context): Bundle? =
+    if (BuildConfig.DEBUG) (context as? Activity)?.intent?.extras else null
+
+private fun debugScreen(bundle: Bundle?): Screen =
+    bundle?.getString("debug_screen")?.let { name ->
+        runCatching { Screen.valueOf(name) }.getOrNull()
+    } ?: Screen.Dashboard
+
 @Composable
 private fun XTunnelApp() {
     val context = LocalContext.current
-    var themeMode by remember { mutableStateOf(ThemePrefs.load(context)) }
+    val debugBundle = remember { debugExtras(context) }
+    var themeMode by remember {
+        mutableStateOf(
+            when (debugBundle?.getString("debug_theme")) {
+                "light" -> ThemeMode.Light
+                "dark" -> ThemeMode.Dark
+                else -> ThemePrefs.load(context)
+            },
+        )
+    }
     val colorScheme = when (themeMode) {
         ThemeMode.System -> if (androidx.compose.foundation.isSystemInDarkTheme()) darkColors() else lightColors()
         ThemeMode.Light -> lightColors()
@@ -143,17 +164,23 @@ private fun XTunnelApp() {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            RootNav(onThemeChange = { mode ->
-                themeMode = mode
-                ThemePrefs.save(context, mode)
-            })
+            RootNav(
+                initialScreen = debugScreen(debugBundle),
+                onThemeChange = { mode ->
+                    themeMode = mode
+                    ThemePrefs.save(context, mode)
+                },
+            )
         }
     }
 }
 
 @Composable
-private fun RootNav(onThemeChange: (ThemeMode) -> Unit) {
-    var screen by remember { mutableStateOf(Screen.Dashboard) }
+private fun RootNav(
+    initialScreen: Screen = Screen.Dashboard,
+    onThemeChange: (ThemeMode) -> Unit,
+) {
+    var screen by remember { mutableStateOf(initialScreen) }
 
     // 点 8：拦截 Android 手势/系统返回——非首页时返回首页，而非退出 App。
     BackHandler(enabled = screen != Screen.Dashboard) {
