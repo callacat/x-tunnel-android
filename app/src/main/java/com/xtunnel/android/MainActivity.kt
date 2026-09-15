@@ -1086,6 +1086,9 @@ private fun modeHint(mode: PerAppConfigStore.Mode): String = when (mode) {
 }
 
 // 单个应用行：图标 + 名称 + 包名 + 勾选框。
+// Card(onClick) 在本 material3 版本可能仍挂 ExperimentalMaterial3Api（防编译
+// 往返：OptIn 对已稳定 API 无害）。
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppRow(
     label: String,
@@ -1220,6 +1223,8 @@ private fun ActionRow(
     }
 }
 
+// SegmentedButton 族若在本版本仍 experimental 需 OptIn（对齐 PerAppScreen 先例）。
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ThemeCard(current: ThemeMode, onThemeChange: (ThemeMode) -> Unit) {
     // 点 3：跟随系统 / 浅色 / 深色 三档。
