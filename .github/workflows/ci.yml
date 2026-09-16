@@ -17,8 +17,9 @@ env:
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK: "27.0.12077973"
   # 内核锚定：sidecar 从 callacat/x-tunnel 的 tag 构建（v0.5.0 起改用正式 tag，
-  # 含 CI + Release 资产 + GHCR 镜像，route 线已合入 main）。
-  CORE_REF: v0.5.0
+  # 含 CI + Release 资产 + GHCR 镜像，route 线已合入 main）。v0.5.2 =
+  # WS Upgrade 头剥离修复（recvvlI1JMNbc7），内网 webssh 经代理握手 101。
+  CORE_REF: v0.5.2
 
 jobs:
   build:

@@ -21,7 +21,7 @@ env:
   ANDROID_BUILD_TOOLS: "36.0.0"
   ANDROID_NDK: "27.0.12077973"
   # 内核锚定：sidecar 从 callacat/x-tunnel 的 tag 构建（与 ci.yml 同源）。
-  CORE_REF: v0.5.0
+  CORE_REF: v0.5.2
 
 jobs:
   release:
